@@ -1,9 +1,10 @@
 module DwaveHMC
 
-# 导出我们将要定义的类型，方便外部使用
 export ModelParameters, SimulationState, ComputeCache
 export initialize_state, initialize_cache
+export init_static_H!, update_H_BdG!, compute_fermion_energy!
 
 include("Types.jl")
+include("Hamiltonian.jl") 
 
-end # module
+end
