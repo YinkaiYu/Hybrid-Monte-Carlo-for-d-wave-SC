@@ -1,0 +1,13 @@
+*.jl.cov
+*.jl.*.cov
+*.ji
+*.zwc
+
+data/*
+!data/.gitkeep
+
+plots/figures/*
+!plots/figures/.gitkeep
+
+.vscode/
+.DS_Store
