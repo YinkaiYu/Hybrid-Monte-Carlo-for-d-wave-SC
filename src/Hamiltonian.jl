@@ -1,4 +1,5 @@
 using LinearAlgebra
+using LogExpFunctions
 
 """
     init_static_H!(cache::ComputeCache, p::ModelParameters, state::SimulationState)
@@ -114,14 +115,12 @@ function compute_fermion_energy!(cache::ComputeCache, p::ModelParameters)
     # 这里的 sum 是对 E_n > 0 求和。
     
     E_total = 0.0
-    half_beta = 0.5 * p.β
     
     @inbounds for E in cache.E_n
         if E > 0
             # 稳定公式：log(2cosh(βE/2)) = βE/2 + log1p(exp(-βE))
-            # 令 x = βE/2, 则 term = x + log1p(exp(-2x))
-            x = half_beta * E
-            E_total -= (x + log1p(exp(-2 * x)))
+            x = p.β * E
+            E_total -= (0.5*x + log1pexp(-x))
         end
     end
     

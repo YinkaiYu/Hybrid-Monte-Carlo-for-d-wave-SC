@@ -149,6 +149,9 @@ mutable struct ComputeCache
     
     # 辅助向量/矩阵 (如果需要中间计算)
     # 例如计算 Force 时可能需要用到
+
+    # 预计算费米分布 ---
+    fermi_factors::Vector{Float64} 
 end
 
 function initialize_cache(p::ModelParameters)
@@ -160,6 +163,7 @@ function initialize_cache(p::ModelParameters)
     E_n = zeros(Float64, dim)
     U = zeros(ComplexF64, dim, dim)
     forces = zeros(ComplexF64, p.N, 2)
+    fermi_factors = zeros(Float64, dim)
     
-    return ComputeCache(H_base, H_herm, E_n, U, forces)
+    return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors)
 end
