@@ -17,4 +17,4 @@ println("\nBenchmarking update_H_BdG! (Pairing update only)...")
 @btime update_H_BdG!($c, $p, $s)
 
 println("\nBenchmarking energy compute (eigen! version)...")
-@btime compute_fermion_energy!($c, $p)
+@btime diagonalize_H_BdG!($c, $p)

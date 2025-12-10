@@ -17,8 +17,7 @@ init_static_H!(c, p, s)
 update_H_BdG!(c, p, s)
 
 # 对角化
-energy = compute_fermion_energy!(c, p)
-println("Energy: $energy")
+diagonalize_H_BdG!(c, p)
 
 # 计算力
 compute_forces!(c, p, s)
@@ -32,7 +31,7 @@ println("\n2. Performing naive Mean-Field Iteration (to find self-consistent sol
 for iter in 1:50
     # 1. 对角化当前 s.Δ 对应的 H
     update_H_BdG!(c, p, s)
-    compute_fermion_energy!(c, p) # 这一步产出 E_n 和 U
+    diagonalize_H_BdG!(c, p) # 这一步产出 E_n 和 U
     
     # 2. 计算 Force
     compute_forces!(c, p, s)

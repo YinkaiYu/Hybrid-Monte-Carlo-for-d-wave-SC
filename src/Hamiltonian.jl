@@ -86,14 +86,14 @@ function update_H_BdG!(cache::ComputeCache, p::ModelParameters, state::Simulatio
 end
 
 """
-    compute_fermion_energy!(cache::ComputeCache, p::ModelParameters)
+    diagonalize_H_BdG!(cache::ComputeCache, p::ModelParameters)
 
 对角化 H_BdG 并计算 HMC 能量。
 H_HMC = ... - sum(log(2*cosh(beta*E/2))) ...
 注意：使用标准 eigen! 进行对角化。
 注意：这里只计算费米子行列式部分的贡献，玻色子项(动能+势能)在外部计算。
 """
-function compute_fermion_energy!(cache::ComputeCache, p::ModelParameters)
+function diagonalize_H_BdG!(cache::ComputeCache, p::ModelParameters)
     # 1. 保护原始哈密顿量
     # 因为 eigen! 会破坏输入矩阵，而我们的 cache.H_base 包含着下一时间步需要的静态项(动能等)。
     # 所以必须先将 H_base 拷贝到工作空间 U 中。
@@ -110,19 +110,5 @@ function compute_fermion_energy!(cache::ComputeCache, p::ModelParameters)
     copyto!(cache.E_n, vals)
     copyto!(cache.U, vecs)
     
-    # 4. 计算费米子自由能 
-    # 对应笔记中的这部分： - sum_{E_n > 0} log(2 * cosh(beta * E_n / 2))
-    # 这里的 sum 是对 E_n > 0 求和。
-    
-    E_total = 0.0
-    
-    @inbounds for E in cache.E_n
-        if E > 0
-            # 稳定公式：log(2cosh(βE/2)) = βE/2 + log1p(exp(-βE))
-            x = p.β * E
-            E_total -= (0.5*x + log1pexp(-x))
-        end
-    end
-    
-    return E_total
+    return nothing
 end

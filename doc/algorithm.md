@@ -50,6 +50,17 @@ F_{ij}=-\frac{\beta}{2J}\left(\Delta_{ij}-J\braket{ c_{i\uparrow} c_{j\downarrow
 $$
 这里可以看出一个重要的物理意义，在零温极限，也即 $\beta\gg J$ 时，我们的经典蒙卡就回到自洽平均场的结果： $\Delta_{ij}-J\braket{ c_{i\uparrow} c_{j\downarrow} - c_{i\downarrow} c_{j\uparrow}}=0$，这一点可以用于检验程序的正确性。
 
+在 HMC 程序中，哈密顿量演化的运动方程是：
+$$
+\frac{\partial \Delta_{ij}}{\partial t} = \frac{\partial H_{\mathrm{HMC}}}{\partial \pi_{ij}^*} = \frac{\pi_{ij}}{2m}
+$$
+$$
+\frac{\partial \pi_{ij}}{\partial t} = -\frac{\partial H_{\mathrm{HMC}}}{\partial \Delta_{ij}^*} = F_{ij}
+$$
+在程序中这通过 Leapfrog 积分实现，注意需要小心处理 $\frac{1}{2m}$ 这种系数，以及注意 $\Delta_{ij}, \pi_{ij}$ 都是复数， 在 Julia 实现中，我们直接使用复数类型来储存这些数组。这里的求导我们使用了自洽的 Wirtinger calculus 规则，在形式上和实数的运动方程有所不同，但都是自洽的。（若为实数场，常见的 HMC 约定其实是  $F_{ij}=-\frac{\beta}{J}\left(\Delta_{ij}-J\braket{ c_{i\uparrow} c_{j\downarrow} - c_{i\downarrow} c_{j\uparrow} }\right) \,, \frac{\partial \Delta_{ij}}{\partial t}= \frac{\pi_{ij}}{m}\,.$）
+
+还有，在生成动量的高斯分布时，也需要注意小心处理 $\frac{1}{2m}$ 这种系数。通常，我们可以设置 $m=1$ 直接作为动量高斯分布的方差。 
+
 完整的算法流程（伪代码）如下：
 
 ```psedo-code
@@ -72,7 +83,7 @@ HMC主程序:
 	计算力 F_ij(Δ_ij)
 	半步动量更新 π_ij = π_ij + δt/2 F_ij
 	循环 Nt 次:
-		整步场更新 Δ_ij = Δ_ij + δt π_ij / m
+		整步场更新 Δ_ij = Δ_ij + δt π_ij / (2m) %这里需要注意系数
 		计算力 F_ij(Δ_ij)
 		整步动量更新 π_ij = π_ij + δt F_ij %最后一步除外
 	半步动量更新 π_ij = π_ij + δt/2 F_ij

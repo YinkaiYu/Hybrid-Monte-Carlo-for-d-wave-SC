@@ -25,6 +25,7 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
     end
     
     # 遍历所有定义的 Bond (只遍历 +x 和 +y，与 Δ 的存储结构一致)
+    # 这一段后面可以考虑做  Loop Reordering 优化，把 n 放在最外层，dir 放在最内层
     @inbounds for i in 1:N
         # 对方向进行循环：1 (+x), 2 (+y)
         for dir in 1:2

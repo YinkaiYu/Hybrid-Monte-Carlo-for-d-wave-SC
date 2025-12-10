@@ -146,12 +146,14 @@ mutable struct ComputeCache
     # 力 F_ij 的缓存
     # 结构与 Delta 相同: (N, 2)
     forces::Matrix{ComplexF64}
-    
-    # 辅助向量/矩阵 (如果需要中间计算)
-    # 例如计算 Force 时可能需要用到
 
-    # 预计算费米分布 ---
+    # 缓存预计算费米分布
     fermi_factors::Vector{Float64} 
+
+    # 缓存用于 HMC 拒绝时的备份
+    Δ_backup::Matrix{ComplexF64}
+    E_n_backup::Vector{Float64}
+    U_backup::Matrix{ComplexF64}
 end
 
 function initialize_cache(p::ModelParameters)
@@ -164,6 +166,9 @@ function initialize_cache(p::ModelParameters)
     U = zeros(ComplexF64, dim, dim)
     forces = zeros(ComplexF64, p.N, 2)
     fermi_factors = zeros(Float64, dim)
+    Δ_backup = zeros(ComplexF64, p.N, 2)
+    E_n_backup = zeros(Float64, dim)
+    U_backup = zeros(ComplexF64, dim, dim)
     
-    return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors)
+    return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, Δ_backup, E_n_backup, U_backup)
 end
