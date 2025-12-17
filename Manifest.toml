@@ -2,7 +2,7 @@
 
 julia_version = "1.11.7"
 manifest_format = "2.0"
-project_hash = "2621551fea0b4e4b60124475883561251ca9c305"
+project_hash = "ff50f4caa5b63bc109c7bed89de6e82a1d20eece"
 
 [[deps.AliasTables]]
 deps = ["PtrArrays", "Random"]
@@ -61,6 +61,12 @@ deps = ["ChunkCodecCore", "Zstd_jll"]
 git-tree-sha1 = "34d9873079e4cb3d0c62926a225136824677073f"
 uuid = "55437552-ac27-4d47-9aa3-63184e8fd398"
 version = "1.0.0"
+
+[[deps.ClusterManagers]]
+deps = ["Distributed", "Logging", "Pkg", "Sockets"]
+git-tree-sha1 = "17b0689c7e6b2f48f71c6834b6a1ed6882be10d2"
+uuid = "34f1f09b-3a8b-5176-ab39-66d58a4d544e"
+version = "2.0.0"
 
 [[deps.CodeTracking]]
 deps = ["InteractiveUtils", "UUIDs"]
@@ -166,6 +172,11 @@ deps = ["Mmap"]
 git-tree-sha1 = "9e2f36d3c96a820c678f2f1f1782582fcf685bae"
 uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 version = "1.9.1"
+
+[[deps.Distributed]]
+deps = ["Random", "Serialization", "Sockets"]
+uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+version = "1.11.0"
 
 [[deps.DocStringExtensions]]
 git-tree-sha1 = "7442a5dfe1ebb773c29cc2962a8980f47221d76c"
@@ -797,12 +808,10 @@ deps = ["CodeTracking", "FileWatching", "JuliaInterpreter", "LibGit2", "LoweredC
 git-tree-sha1 = "ff0bd131abc4ebd9b66d2033144bed6d011d5074"
 uuid = "295af30f-e4ad-537b-8983-00126c2a3abe"
 version = "3.12.3"
+weakdeps = ["Distributed"]
 
     [deps.Revise.extensions]
     DistributedExt = "Distributed"
-
-    [deps.Revise.weakdeps]
-    Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
