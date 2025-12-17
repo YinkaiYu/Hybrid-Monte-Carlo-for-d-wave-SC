@@ -68,7 +68,7 @@ end
 2. Leapfrog 演化 (时间步长 p.dt, 步数 Nt)
 3. Metropolis 判据
 """
-function hmc_sweep!(cache::ComputeCache, p::ModelParameters, state::SimulationState; Nt::Int=20)
+function hmc_sweep!(cache::ComputeCache, p::ModelParameters, state::SimulationState; Nt::Int=20, dt::Float64=p.dt)
     # --- 1. 初始化 ---
     # 注意确保当前 H_BdG 和 cache.E_n 是与当前 state.Δ 对应的
     # 通常上一步结束时已经是对应的。
@@ -86,8 +86,6 @@ function hmc_sweep!(cache::ComputeCache, p::ModelParameters, state::SimulationSt
     copyto!(cache.U_backup, cache.U)
     
     # --- 2. Leapfrog Integration ---
-    dt = p.dt
-    
     # (1) Half-step Momentum update
     # π = π + (dt/2) * F
     compute_forces!(cache, p, state)
