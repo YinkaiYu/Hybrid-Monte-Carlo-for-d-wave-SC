@@ -64,7 +64,7 @@ $$
 $$
 = \int \mathcal{D}|\Delta|\,\mathcal{D}\theta \;
 \exp\!\left( -\frac{\beta}{2J} \sum_{\langle ij\rangle} |\Delta_{ij}|^2 \right)
-\det\!\left( 1 + e^{-\beta H_{\mathrm{BdG}}} \right)^{\frac12}
+\det\!\left( 1 + e^{-\beta H_{\mathrm{BdG}}} \right)
 .
 $$
 接下来考虑做经典蒙卡，采样 $|\Delta_{ij}|$ 和 $\theta_{ij}$

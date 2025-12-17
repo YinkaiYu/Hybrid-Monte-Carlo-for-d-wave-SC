@@ -17,13 +17,12 @@ function compute_total_energy(cache::ComputeCache, p::ModelParameters, state::Si
     # 这里我们只负责把各项加起来。
     
     # E_fermion (从缓存读取)
-    # - sum_{E>0} log(2cosh(βE/2))
-    # 稳定公式：log(2cosh(βE/2)) = βE/2 + log1p(exp(-βE))
+    # - sum_{E>0} βE + 2*log1p(exp(-βE))
     E_fermion = 0.0
     @inbounds for E in cache.E_n
         if E > 0
             x = p.β * E
-            E_fermion -= (0.5*x + log1pexp(-x))
+            E_fermion -= (x + 2.0*log1pexp(-x))
         end
     end
 

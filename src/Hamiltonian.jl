@@ -68,15 +68,15 @@ function update_H_BdG!(cache::ComputeCache, p::ModelParameters, state::Simulatio
     @inbounds for i in 1:N
         # +x direction bond
         j_x = p.nn_table[i, 1] 
-        val_x = state.Δ[i, 1]
+        val_x = 0.5 * state.Δ[i, 1]
         
         # 对应的矩阵元，直接覆盖原有数值 (Overwrite)
-        H[i, j_x + N] = val_x  # Δ_{ij} c^†_{i↑} c^†_{j↓}
-        H[j_x, i + N] = val_x  # Δ_{ij} c^†_{j↑} c^†_{i↓} 
+        H[i, j_x + N] = val_x  # (1/2) * Δ_{ij} c^†_{i↑} c^†_{j↓}
+        H[j_x, i + N] = val_x  # (1/2) * Δ_{ij} c^†_{j↑} c^†_{i↓} 
         
         # +y direction bond
         j_y = p.nn_table[i, 2]
-        val_y = state.Δ[i, 2]
+        val_y = 0.5 * state.Δ[i, 2]
         
         H[i, j_y + N] = val_y
         H[j_y, i + N] = val_y

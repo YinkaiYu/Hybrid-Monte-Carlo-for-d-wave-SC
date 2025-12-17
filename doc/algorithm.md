@@ -42,7 +42,7 @@ $$
 H_{\mathrm{HMC}}=
 \frac{1}{2m}\sum_{\braket{ij}}|\pi_{ij}|^2
 +\frac{\beta}{2J}\sum_{\braket{ij}}|\Delta_{ij}|^2
--\frac12 \mathrm{tr}\, \mathrm{ln}\, \left(1+e^{-\beta H_{\mathrm{BdG}}}\right)
+- \mathrm{tr}\, \mathrm{ln}\, \left(1+e^{-\beta H_{\mathrm{BdG}}}\right)
 \,.
 $$
 $$
@@ -77,7 +77,7 @@ HMC主程序:
 	对角化 H_BdG(Δ_ij) 得到 E_n %其实在计算力时已经做了这一步对角化
 	H_HMC = 1/(2m) \sum_<ij> |π_ij|^2 %可以提前生成好近邻bond列表，求和时遍历它即可
 		+ β/(2J) \sum_<ij> |Δ_ij|^2 
-		- \sum_(E_n>0) log(2*cosh(β*E_n/2)) %使用log1pexp或者log1p函数避免数值不稳定
+		- \sum_(E_n>0) 2*log(2*cosh(β*E_n/2)) %使用log1pexp或者log1p函数避免数值不稳定
 
 分子动力学演化 Δ_ij,π_ij -> Δ'_ij,π'_ij :
 	计算力 F_ij(Δ_ij)
