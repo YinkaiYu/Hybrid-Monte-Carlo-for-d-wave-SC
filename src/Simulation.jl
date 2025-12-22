@@ -107,8 +107,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     tee_println("Target Sweeps: $n_sweep, Nt=$Nt_measure, dt=$(round(dt_meas, digits=4))")
     
     # 写入 CSV 表头
-    # 格式: Sweep, Acc, Energy, D_amp, D_loc, D_glob, S_D, hole_p
-    println(f_data, "Sweep,Accepted,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p")
+    println(f_data, "Sweep,Accepted,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair")
     
     acc_count = 0
     meas_start_time = time()
@@ -127,9 +126,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
         
         # 写入文件 (CSV格式)
         # 使用 @printf 无法直接输出到文件流，用 write + sprintf 组合
-        line = @sprintf("%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", 
+        line = @sprintf("%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", 
                         i, accepted, obs.total_energy, 
-                        obs.Δ_amp, obs.Δ_local, obs.Δ_global, obs.S_Δ, obs.hole_conc)
+                        obs.Δ_amp, obs.Δ_local, obs.Δ_global, obs.S_Δ, obs.hole_conc,
+                        obs.Δ_diff, obs.Δ_pair)
         write(f_data, line)
         flush(f_data) # <--- 关键！确保断电/Kill不丢数据
         

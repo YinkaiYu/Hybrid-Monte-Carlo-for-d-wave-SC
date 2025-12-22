@@ -73,7 +73,8 @@ struct ObservablesResult
     Δ_global::Float64 # 全局 d-wave (绝对值)
     S_Δ::Float64     # 结构因子
     hole_conc::Float64 # 空穴浓度 p
-    # electron_conc = 1 - p，不需要存
+    Δ_diff::Float64
+    Δ_pair::Float64
 end
 
 """
@@ -160,6 +161,57 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     E_boson = coef_boson * sum(abs2, state.Δ)
 
     total_energy = (E_fermion + E_boson)/N
+
+    # ==========================================
+    # [新增] Benchmark 相关的计算
+    # ==========================================
+    sum_diff = 0.0
+    sum_pair_global = 0.0 + 0.0im # sum (P_x - P_y)/2
     
-    return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole)
+    # 重新刷新 fermi factors (确保是最新的)
+    @inbounds @simd for n in 1:(2*N)
+        cache.fermi_factors[n] = logistic(-p.β * E[n])
+    end
+    f = cache.fermi_factors
+    
+    @inbounds for i in 1:N
+        # 我们需要计算 x方向 和 y方向 的 P_{ij}
+        # P_dir = < c_{i↑} c_{j↓} - c_{i↓} c_{j↑} >
+        
+        # --- x direction ---
+        jx = p.nn_table[i, 1] # +x neighbor
+        ρ_1x = zero(ComplexF64)
+        ρ_2x = zero(ComplexF64)
+        @simd for n in 1:(2*N)
+            ρ_1x += U[i, n] * f[n] * conj(U[jx+N, n])
+            ρ_2x += U[jx, n] * f[n] * conj(U[i+N, n])
+        end
+        P_x = -ρ_1x - ρ_2x
+        
+        # --- y direction ---
+        jy = p.nn_table[i, 2] # +y neighbor
+        ρ_1y = zero(ComplexF64)
+        ρ_2y = zero(ComplexF64)
+        @simd for n in 1:(2*N)
+            ρ_1y += U[i, n] * f[n] * conj(U[jy+N, n])
+            ρ_2y += U[jy, n] * f[n] * conj(U[i+N, n])
+        end
+        P_y = -ρ_1y - ρ_2y
+        
+        # 1. Diff: |Δ - J*P|
+        # 记得 state.Δ 也是 (N, 2)
+        diff_x = abs(state.Δ[i, 1] - p.J * P_x)
+        diff_y = abs(state.Δ[i, 2] - p.J * P_y)
+        sum_diff += (diff_x + diff_y) / 2.0 # 平均每个 bond 的偏差
+        
+        # 2. Pair order parameter (from fermions): J * (P_x - P_y)/2
+        # 注意公式里的 J 因子
+        term = p.J * 0.5 * (P_x - P_y)
+        sum_pair_global += term
+    end
+    
+    val_diff = sum_diff / N
+    val_pair = abs(sum_pair_global / N)
+    
+    return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,val_diff, val_pair)
 end
