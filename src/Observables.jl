@@ -1,5 +1,8 @@
 using LinearAlgebra
 using LogExpFunctions
+using SparseArrays
+using FFTW
+using JLD2
 
 """
     compute_forces!(cache::ComputeCache, p::ModelParameters, state::SimulationState)
@@ -57,8 +60,6 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
     
     return nothing
 end
-
-# src/Observables.jl 添加到文件末尾
 
 """
     ObservablesResult
@@ -163,7 +164,7 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     total_energy = (E_fermion + E_boson)/N
 
     # ==========================================
-    # [新增] Benchmark 相关的计算
+    # Benchmark 相关的计算
     # ==========================================
     sum_diff = 0.0
     sum_pair_global = 0.0 + 0.0im # sum (P_x - P_y)/2
@@ -214,4 +215,272 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     val_pair = abs(sum_pair_global / N)
     
     return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,val_diff, val_pair)
+end
+
+
+# ------------------------------------------------
+# 1. 初始化辅助工具
+# ------------------------------------------------
+
+"""
+    build_current_operator!(cache::ComputeCache, p::ModelParameters)
+
+构建 x 方向电流算符的稀疏矩阵 Jx。
+Jx = i * sum ( t * c^dag_i c_{i+x} + t' * ... - h.c. )
+注意：在 Nambu 表象下，Jx = diag(Jx_particle, Jx_particle)。
+因为 Jx_hole = Jx_particle (对于实数 t)。
+"""
+function build_current_operator!(cache::ComputeCache, p::ModelParameters)
+    N = p.N
+    # 使用 Triplet 格式构建稀疏矩阵 (I, J, V)
+    I_idx = Int[]
+    J_idx = Int[]
+    V_val = ComplexF64[]
+    
+    # 辅助函数：添加项 c^dag_u c_v 的系数 val
+    # 即 matrix[u, v] += val
+    function add_term!(u, v, val)
+        push!(I_idx, u); push!(J_idx, v); push!(V_val, val)
+    end
+    
+    # 遍历所有格点构建 Particle block (N x N)
+    for i in 1:N
+        # +x neighbor (Nearest Neighbor)
+        j_x = p.nn_table[i, 1] 
+        # Term: i * t * (c^dag_i c_j - c^dag_j c_i)
+        val = im * p.t
+        add_term!(i, j_x, val)      # <i|J|j>
+        add_term!(j_x, i, conj(val)) # <j|J|i>
+        
+        # +x+y (dir=1 in nnn)
+        j_xpy = p.nnn_table[i, 1]
+        val_tp = im * p.tp 
+        add_term!(i, j_xpy, val_tp)
+        add_term!(j_xpy, i, conj(val_tp))
+        
+        # +x-y (dir=4 in nnn, neighbor of i is i+x-y)
+        # 注意: nnn_table 定义: 1:+x+y, 2:-x+y, 3:-x-y, 4:+x-y
+        j_xmy = p.nnn_table[i, 4] 
+        val_tp = im * p.tp 
+        add_term!(i, j_xmy, val_tp)
+        add_term!(j_xmy, i, conj(val_tp))
+    end
+    
+    # 构建 N x N 稀疏矩阵
+    Jx_part = sparse(I_idx, J_idx, V_val, N, N)
+    
+    # 构建完整的 2N x 2N Nambu 矩阵
+    # J_BdG = [ Jx_part   0       ]
+    #         [ 0         Jx_part ]
+    # 因为对于实数 hopping，空穴部分的电流算符矩阵元与粒子部分相同
+    cache.Jx_sparse = blockdiag(Jx_part, Jx_part)
+    
+    return nothing
+end
+
+# ------------------------------------------------
+# 2. 复杂物理量测量结构体
+# ------------------------------------------------
+
+"""
+SpectrumResult
+用于存储 JLD2 的重型数据
+"""
+struct SpectrumResult
+    # 标量结果
+    superfluid_stiffness::Float64
+    dc_conductivity::Float64
+    
+    # 谱学结果 (Arrays)
+    ω_grid::Vector{Float64}                 # 光电导用的 ω > 0
+    optical_conductivity::Vector{Float64}   # Re σ(ω)
+    dos_ω_grid::Vector{Float64}             # DOS 用的完整网格
+    dos::Vector{Float64}                    # N(ω)
+    
+    # 动量解析的谱权重 (可选，数据量巨大，通常只存特定路径或求和)
+    # 我们这里存: A(k, ω=0) (Fermi Surface) 和 DOS.
+    A_k_ω0::Matrix{Float64} # 费米面谱权重
+end
+
+# ------------------------------------------------
+# 3. 核心测量函数
+# ------------------------------------------------
+
+function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
+    N = p.N
+    dim = 2 * N
+    β = p.β
+    U = cache.U
+    E = cache.E_n
+    f = cache.fermi_factors # already updated in standard measure
+    
+    # ------------------------------------------------
+    # A. 计算电流矩阵元 J_mn = <n|Jx|m>
+    # ------------------------------------------------
+    # 1. Temp = Jx_sparse * U  (Sparse * Dense -> Dense)
+    # 2. J_mn = U' * Temp      (Dense * Dense -> Dense)
+    # 这是 BLAS Level 3 操作，MKL 极快。
+    
+    # 注意：Jx_sparse 是常数，如果还没初始化需要初始化
+    if nnz(cache.Jx_sparse) == 0
+        build_current_operator!(cache, p)
+    end
+    
+    mul!(cache.temp_JU, cache.Jx_sparse, U)
+    mul!(cache.J_mn, U', cache.temp_JU) 
+    
+    J_mn = cache.J_mn # Alias
+    
+    # ------------------------------------------------
+    # B. 超流刚度 ρ_s
+    # ------------------------------------------------
+    # 1. 抗磁项 < -Kx >
+    
+    val_dia = 0.0
+
+    @inbounds for n in 1:dim
+        En = E[n]
+        if En > 0
+            w_n = 0.0 
+            @simd for i in 1:N 
+                # u_{i,n} -> U[i, n] 
+                # v_{i,n} -> U[i+N, n] 
+                j_x = p.nn_table[i, 1] 
+                j_xpy = p.nnn_table[i, 1] 
+                j_xmy = p.nnn_table[i, 4] 
+                w_n += p.t  * 2.0 * real( U[i+N,n]*conj(U[j_x+N,n]) - conj(U[i,n])*U[j_x,n] )
+                w_n += p.tp * 2.0 * real( U[i+N,n]*conj(U[j_xpy+N,n]) - conj(U[i,n])*U[j_xpy,n] )
+                w_n += p.tp * 2.0 * real( U[i+N,n]*conj(U[j_xmy+N,n]) - conj(U[i,n])*U[j_xmy,n] )
+            end
+            val_dia += w_n * tanh(0.5 * β * En) / N
+        end
+    end
+    
+    # 2. 顺磁项 Lambda_xx
+    # sum_{n,m} (f(n) - f(m))/(Em - En) |J_nm|^2
+    Lambda_xx = 0.0
+    
+    @inbounds for n in 1:dim
+        for m in 1:dim
+            diff_E = E[m] - E[n]
+            diff_f = f[n] - f[m]
+            
+            ratio = 0.0
+            if abs(diff_E) < 1e-8
+                # limit E_m -> E_n
+                # ratio = - f'(E_n) = beta * f[n] * (1 - f[n])
+                ratio = β * f[n] * (1.0 - f[n])
+            else
+                ratio = diff_f / diff_E
+            end
+            
+            Lambda_xx += ratio * abs2(J_mn[n, m])
+        end
+    end
+    Lambda_xx /= N
+    
+    superfluid_stiffness = val_dia - Lambda_xx
+    
+    # ------------------------------------------------
+    # C. 光电导与直流电导
+    # ------------------------------------------------
+    # Re σ(ω) = (π/Nω) * sum_{n,m} (f(n)-f(m)) |J|^2 delta(ω - (Em - En))
+    # DC: ω -> 0 limit.
+    
+    # Grid
+    ω_grid = collect(p.ω_min : p.dω : p.ω_max)
+    σ_ω = zeros(Float64, length(ω_grid))
+    dc_cond = 0.0
+    
+    # Pre-calculate delta function broadening
+    function lorentzian(x, η)
+        return (1.0/π) * (η / (x^2 + η^2))
+    end
+    
+    @inbounds for n in 1:dim
+        for m in 1:dim
+            Em_En = E[m] - E[n]
+            J2 = abs2(J_mn[n, m])
+            
+            # 1. DC Conductivity
+            # sum (-f') |J|^2 delta(Em - En)
+            # -f' = β * f * (1-f)
+            dc_cond += (β * f[n] * (1.0 - f[n])) * J2 * lorentzian(Em_En, p.η)
+            
+            # 2. Optical Conductivity
+            fn_fm = f[n] - f[m]
+            if abs(fn_fm) < 1e-12 continue end
+            for (iω, ω) in enumerate(ω_grid)
+                σ_ω[iω] += (fn_fm / ω) * J2 * lorentzian(ω - Em_En, p.η)
+            end
+        end
+    end
+    
+    dc_cond *= (π / N)
+    σ_ω .*= (π / N)
+    
+    # ------------------------------------------------
+    # D. 态密度 (DOS) & 谱函数 A(k, 0)
+    # ------------------------------------------------
+    # DOS 网格：从 -ω_max 到 +ω_max (或者稍微大一点，覆盖整个能带)
+    # 我们这里使用对称的区间
+    dos_ω_grid = collect(-p.ω_max : p.dω : p.ω_max)
+    dos_vals = zeros(Float64, length(dos_ω_grid)) # Reuse ω grid for DOS positive side
+    
+    # A(k, w=0) map
+    # A(k, 0) ~ sum_n |u_n(k)|^2 delta(0 - En)
+    ak_map = zeros(Float64, p.Lx, p.Ly)
+    
+    for n in 1:dim
+        En = E[n]
+        # 1. Calculate weight W_n = sum_i |u_{i,n}|^2
+        # u is top half of U
+        w_n = 0.0
+        @simd for i in 1:N
+            w_n += abs2(U[i, n])
+        end
+        
+        # 2. Add to DOS
+        # We need to cover negative energies too? Usually DOS is symmetric or plotted full.
+        # Let's just plot for w in ω_grid (positive).
+        # Check symmetry: E_n and -E_n.
+        for (iw, w) in enumerate(dos_ω_grid)
+            dos_vals[iw] += w_n * lorentzian(w - En, p.η)
+        end
+        
+        # 3. Spectral Function A(k, 0) (Fermi Surface intensity)
+        # Check if En is close to 0 (within η)
+        weight_at_zero = lorentzian(0.0 - En, p.η)
+        
+        if weight_at_zero > 1e-6
+            # Perform FFT for this eigenstate
+            # Copy u_{i,n} to buffer
+            for i in 1:N
+                # Map 1D i to 2D (x,y)
+                x = mod1(i, p.Lx)
+                y = cld(i, p.Lx)
+                cache.u_r_cache[x, y] = U[i, n]
+            end
+            
+            # 执行 In-place FFT
+            # cache.fft_plan * cache.u_r_cache -> cache.u_k_cache
+            # 使用 mul! 避免内存分配
+            mul!(cache.u_k_cache, cache.fft_plan, cache.u_r_cache)
+            
+            # Add to map: |u_k|^2 * delta(E)
+            for y in 1:p.Ly, x in 1:p.Lx
+                ak_map[x, y] += abs2(cache.u_k_cache[x, y]) * weight_at_zero
+            end
+        end
+    end
+    
+    dos_vals ./= N
+    ak_map ./= N # Normalization of FFT
+    # FFTW definition: backward fft (default) is unnormalized sum. 
+    # 1/sqrt(N) factor in definition means |FFT|^2 / N.
+    
+    return SpectrumResult(superfluid_stiffness, dc_cond, 
+                          ω_grid, σ_ω, 
+                          dos_ω_grid, dos_vals, 
+                          ak_map)
 end

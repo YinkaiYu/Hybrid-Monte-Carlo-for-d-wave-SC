@@ -1,5 +1,7 @@
 using LinearAlgebra
 using Random
+using SparseArrays
+using FFTW        
 
 # ---------------------------------------------------------
 # 1. 模型参数 (不可变)
@@ -35,10 +37,18 @@ struct ModelParameters
     # 在 Julia 中，Vector{Vector{Int}} 有点慢，用 Matrix{Int} 更好 (列优先)
     nn_table::Matrix{Int}  # Nearest Neighbors (4个方向)
     nnn_table::Matrix{Int} # Next Nearest Neighbors (4个方向)
+
+    # 光谱与输运计算参数
+    η::Float64          # 展宽因子 (Broadening)
+    ω_min::Float64      # 光电导频率下限
+    ω_max::Float64      # 光电导频率上限
+    dω::Float64         # 频率步长
+    n_ω::Int            # 频率点数
 end
 
 # 构造函数：输入基本参数，自动计算 N 和邻居表
-function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, dt, mass)
+function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, dt, mass;
+                         eta_scale::Float64=2.0, domega::Float64=0.01) # eta_scale * (W_band / N)
     N = Lx * Ly
     # 初始化邻居表
     # 约定方向：1: +x, 2: +y, 3: -x, 4: -y
@@ -70,11 +80,21 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, dt, mass)
         nnn_table[i, 4] = get_idx(x + 1, y - 1)
     end
     
+    # --- 参数初始化 ---
+    est_bandwidth = 5.0 * abs(t)
+    η = eta_scale * (est_bandwidth / N)
+    
+    # 频率网格 0 到 t (或者更大)
+    ω_min = η
+    ω_max = est_bandwidth * 0.5 # 通常计算到半带宽即可
+    n_ω = floor(Int, (ω_max - ω_min) / domega) + 1
+    
     return ModelParameters(Lx, Ly, N, 
         Float64(t), Float64(tp), Float64(μ), 
         Float64(W), Float64(n_imp), 
         Float64(β), Float64(J), Float64(dt), Float64(mass),
-        nn_table, nnn_table)
+        nn_table, nnn_table,
+        Float64(η), Float64(ω_min), Float64(ω_max), Float64(domega), n_ω)
 end
 
 # ---------------------------------------------------------
@@ -154,6 +174,16 @@ mutable struct ComputeCache
     Δ_backup::Matrix{ComplexF64}
     E_n_backup::Vector{Float64}
     U_backup::Matrix{ComplexF64}
+    
+    # 输运计算缓存
+    Jx_sparse::SparseMatrixCSC{ComplexF64, Int} # 稀疏电流算符 (2N x 2N)
+    J_mn::Matrix{ComplexF64}                    # 电流矩阵元 <n|Jx|m> (2N x 2N, 稠密)
+    temp_JU::Matrix{ComplexF64}
+    
+    # FFT 计划和缓存
+    u_r_cache::Matrix{ComplexF64} # 用于存储 fft 前的波函数 (Lx x Ly)
+    u_k_cache::Matrix{ComplexF64} # 用于存储 fft 后的波函数 (Lx x Ly)
+    fft_plan::FFTW.cFFTWPlan      # 预计算的 FFT 计划
 end
 
 function initialize_cache(p::ModelParameters)
@@ -170,5 +200,20 @@ function initialize_cache(p::ModelParameters)
     E_n_backup = zeros(Float64, dim)
     U_backup = zeros(ComplexF64, dim, dim)
     
-    return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, Δ_backup, E_n_backup, U_backup)
+    # 1. 构造稀疏电流算符 (结构不变，只初始化一次)
+    # 我们将在专门的函数里填充它，这里先分配空
+    Jx_sparse = spzeros(ComplexF64, dim, dim)
+    J_mn = zeros(ComplexF64, dim, dim)
+    temp_JU = zeros(ComplexF64, dim, dim) 
+    
+    # 2. FFT
+    # 创建一个临时的 Lx * Ly 矩阵来生成 plan
+    u_r_cache = zeros(ComplexF64, p.Lx, p.Ly)
+    u_k_cache = zeros(ComplexF64, p.Lx, p.Ly)
+    fft_plan = plan_fft(u_k_cache) # 预规划
+    
+    return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, 
+                        Δ_backup, E_n_backup, U_backup,
+                        Jx_sparse, J_mn, temp_JU,
+                        u_r_cache, u_k_cache, fft_plan)
 end
