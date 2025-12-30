@@ -5,13 +5,13 @@ using Printf
 # ==========================================
 # 1. 设置
 # ==========================================
-# 请修改为你存放数据的目录
-target_dir = "data/beta_test_L12_J0.8_imp0.0" 
+# 修改：匹配之前的 T_scan 目录命名格式
+target_dir = "data/T_scan_L24_J0.8_W1.0_imp0.05_mu_-1.08" 
 
 output_filename = "summary_all.csv"
 
 # ==========================================
-# 2. 辅助函数
+# 2. 辅助函数 (保持不变)
 # ==========================================
 
 """
@@ -25,17 +25,12 @@ function process_csv(filepath)
         return nothing, nothing, nothing
     end
 
-    # 读取数据和表头
     try
         data, header = readdlm(filepath, ',', header=true)
-        # header 是 1xN 矩阵，转为 Vector
         col_names = vec(header)
         
-        # 找到需要排除的列 (Sweep, sweep, possibly Accepted if needed)
-        # 这里我们只排除 Sweep，保留 Accepted 因为它的均值就是接受率
+        # 排除 Sweep 列
         exclude_indices = findall(x -> lowercase(string(x)) == "sweep", col_names)
-        
-        # 保留的列索引
         keep_indices = setdiff(1:length(col_names), exclude_indices)
         
         if isempty(keep_indices)
@@ -45,12 +40,17 @@ function process_csv(filepath)
         final_names = col_names[keep_indices]
         final_data = data[:, keep_indices]
         
-        # 计算统计量
-        # rows are steps, cols are observables
         n_steps = size(final_data, 1)
         
-        # 如果数据行数太少，给警告
         if n_steps < 2
+            # 只有1行数据没法算标准差，但在 summary 中可以仅输出均值，
+            # 这里为了安全还是返回 nothing 或者你可以改为接受
+            # 也可以简单处理：
+            if n_steps == 1
+                 means = final_data[1, :]
+                 errs = zeros(length(means))
+                 return final_names, means, errs
+            end
             println("  Warning: Not enough data in $filepath (rows=$n_steps)")
             return nothing, nothing, nothing
         end
@@ -73,35 +73,38 @@ end
 
 println("Starting Post-Processing in: $target_dir")
 
-# 1. 扫描所有子目录
-subdirs = filter(d -> isdir(joinpath(target_dir, d)) && startswith(d, "beta_"), readdir(target_dir))
+if !isdir(target_dir)
+    println("Error: Directory '$target_dir' does not exist.")
+    exit()
+end
+
+# 修改：1. 扫描所有以 "T_" 开头的子目录
+subdirs = filter(d -> isdir(joinpath(target_dir, d)) && startswith(d, "T_"), readdir(target_dir))
 
 if isempty(subdirs)
-    println("No 'beta_*' directories found!")
+    println("No 'T_*' directories found!")
     exit()
 end
 
 println("Found $(length(subdirs)) directories.")
 
-# 用于存储所有行的结果 (Dictionary list)
-# 结构: [ Dict("T"=>..., "Beta"=>..., "Energy_mean"=>..., ...), ... ]
 all_results = []
-# 用于收集所有出现过的列名 (保证最后的表头完整)
 all_keys = Set{String}(["T", "Beta"])
 
 for subdir in subdirs
     full_path = joinpath(target_dir, subdir)
     
-    # 解析 Beta
-    # 假设目录名格式 beta_10.0 或 beta_10.000
+    # 修改：2. 解析 T 值
+    # 假设目录名格式 T_0.00123 (基于 sigdigits=3)
     try
-        beta_str = replace(subdir, "beta_" => "")
-        beta_val = parse(Float64, beta_str)
-        T_val = 1.0 / beta_val
+        T_str = replace(subdir, "T_" => "")
+        T_val = parse(Float64, T_str)
         
-        println("Processing Beta = $beta_val ...")
+        # 计算对应的 Beta
+        beta_val = 1.0 / T_val
         
-        # 当前行的记录
+        println("Processing T = $T_val (Beta ≈ $(round(beta_val, digits=2))) ...")
+        
         row_dict = Dict{String, Any}()
         row_dict["Beta"] = beta_val
         row_dict["T"] = T_val
@@ -142,25 +145,19 @@ end
 # ==========================================
 
 # 按温度 T 从低到高排序
-sort!(all_results, by = x -> x["Beta"])
+sort!(all_results, by = x -> x["T"])
 
-# 构建最终的列顺序
-# 强制 T 和 Beta 在最前面
 sorted_keys = sort(collect(all_keys))
-# 移除 T 和 Beta 以便重新插入
 filter!(x -> x != "T" && x != "Beta", sorted_keys)
 final_header = vcat(["T", "Beta"], sorted_keys)
 
 output_path = joinpath(target_dir, output_filename)
 open(output_path, "w") do io
-    # 1. 写入表头
     println(io, join(final_header, ","))
     
-    # 2. 写入数据行
     for row in all_results
         vals = []
         for key in final_header
-            # 如果某一行缺少某个key (比如某个beta下没跑transport), 填 NaN
             val = get(row, key, NaN)
             push!(vals, val)
         end
@@ -170,4 +167,4 @@ end
 
 println("--------------------------------------------------")
 println("Done! Summary saved to: $output_path")
-println("Contains data for: $(join(final_header, ", "))")
+println("Columns: $(join(final_header, ", "))")

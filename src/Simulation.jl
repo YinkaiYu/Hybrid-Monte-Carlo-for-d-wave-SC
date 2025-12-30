@@ -65,7 +65,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     
     # 写入 CSV 表头
     # 基础物理量
-    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair")
+    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair")
     # 输运标量
     println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
     
@@ -142,6 +142,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     # 这里采用 lazy initialization (第一次测量时分配内存)
     accum_opt_cond = Vector{Float64}()
     accum_dos = Vector{Float64}()
+    accum_dos_AN = Vector{Float64}()
     accum_Ak0 = Matrix{Float64}(undef, 0, 0)
     
     for i in 1:n_sweep
@@ -154,10 +155,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
         
         # 写入 Observables CSV
         # Sweep, Accepted, dH, ...
-        line = @sprintf("%d,%d,%.5e,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", 
+        line = @sprintf("%d,%d,%.5e,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", 
                 i, acc, dH, obs.total_energy, 
                 obs.Δ_amp, obs.Δ_local, obs.Δ_global, obs.S_Δ, obs.hole_conc,
-                obs.Δ_diff, obs.Δ_pair)
+                obs.Δ_diff, obs.Δ_pair, obs.Δ_localpair)
         write(f_obs, line)
         flush(f_obs) # 实时落盘
         
@@ -177,11 +178,13 @@ function run_simulation(p::ModelParameters, out_dir::String;
             if bin_count == 0
                 accum_opt_cond = copy(spec_res.optical_conductivity)
                 accum_dos = copy(spec_res.dos)
+                accum_dos_AN = copy(spec_res.dos_AN)
                 accum_Ak0 = copy(spec_res.A_k_ω0)
                 bin_count = 1
             else
                 accum_opt_cond .+= spec_res.optical_conductivity
                 accum_dos .+= spec_res.dos
+                accum_dos_AN .+= spec_res.dos_AN
                 accum_Ak0 .+= spec_res.A_k_ω0
                 bin_count += 1
             end
@@ -191,6 +194,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 # 求平均
                 accum_opt_cond ./= bin_count
                 accum_dos ./= bin_count
+                accum_dos_AN ./= bin_count
                 accum_Ak0 ./= bin_count
                 
                 # JLD2 追加写入
@@ -201,6 +205,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     g = JLD2.Group(file, group_name)
                     g["opt_cond"] = accum_opt_cond
                     g["dos"] = accum_dos
+                    g["dos_AN"] = accum_dos_AN
                     g["A_k0"] = accum_Ak0
                     g["count"] = bin_count # 记录这个 bin 包含了多少个样本
                 end

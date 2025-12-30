@@ -7,19 +7,21 @@ using Plots
 # ==========================================
 # 1. 参数设置
 # ==========================================
-Lx, Ly = 12, 12
+Lx, Ly = 24, 24
 t, tp = 1.0, -0.35
 μ = -1.08
-W, n_imp = 1.0, 0.0
+W, n_imp = 1.0, 0.05
 J = 0.8
 mass = 1.0
-dt_dummy = 0.05 # 占位符，会被自动计算覆盖
+dt_dummy = 0.05 
 
-# 扫描 Beta
-beta_start = 0.01
-beta_end = 100000.0
+T_start = 0.0001  
+T_end = 1000.0   
 n_points = 24
-betas = 10 .^ range(log10(beta_start), stop=log10(beta_end), length=n_points)
+Ts = 10 .^ range(log10(T_start), stop=log10(T_end), length=n_points)
+
+# 如果想用线性刻度，注释掉上面一行，使用下面这行：
+# Ts = range(T_start, stop=T_end, length=n_points)
 
 # 模拟控制参数
 n_therm = 20
@@ -27,37 +29,38 @@ n_sweep = 100
 Nt_therm = 20
 Nt_measure = 6
 
-# 关键：由于 sweep 次数很少，我们需要每步都测超流刚度才能算出误差
 measure_freq = 1 
-bin_size = 10 # JLD2 分箱大小 (这里主要关注 CSV，这个参数不太影响)
+bin_size = 10 
 
-# 输出总目录
-base_dir = "data/beta_test_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)"
+# 输出目录名称为 T_scan
+base_dir = "data/T_scan_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)_mu_$(μ)"
 if !isdir(base_dir)
     mkpath(base_dir)
 end
 
 println("==================================================")
-println("Start Beta Sweep Test")
+println("Start Temperature Sweep Test")
 println("L=$Lx, J=$J, n_imp=$(n_imp)")
-println("Betas: $betas")
+println("Temperatures: $Ts")
 println("==================================================")
 
 # ==========================================
 # 2. 循环运行模拟
 # ==========================================
-for (i, β) in enumerate(betas)
-    @printf("\n--- Processing Point %d/%d: Beta=%.2f ---\n", i, n_points, β)
+# 修改：遍历 T 数组
+for (i, T) in enumerate(Ts)
+    β = 1.0 / T
+    
+    @printf("\n--- Processing Point %d/%d: T=%.5f (Beta=%.2f) ---\n", i, n_points, T, β)
     
     # 构造参数
-    # 注意：eta_scale 和 domega 即使不测光谱也需要给默认值
-    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, dt_dummy, mass, eta_scale=2.0, domega=0.01)
+    # 将计算出的 β 传入 ModelParameters
+    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, dt_dummy, mass, eta_scale=1.0, domega=0.001)
     
-    # 子目录
-    work_dir = joinpath(base_dir, "beta_$(round(β, digits=3))")
+    # 子目录以 T 命名
+    work_dir = joinpath(base_dir, "T_$(round(T, sigdigits=3))")
     
     # 运行模拟
-    # 这里的日志会输出到 work_dir/simulation.log，屏幕上也会有简略输出
     run_simulation(p, work_dir; 
                    n_therm=n_therm, 
                    n_sweep=n_sweep, 

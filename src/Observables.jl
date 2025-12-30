@@ -76,6 +76,7 @@ struct ObservablesResult
     hole_conc::Float64 # 空穴浓度 p
     Δ_diff::Float64
     Δ_pair::Float64
+    Δ_localpair::Float64
 end
 
 """
@@ -168,6 +169,7 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     # ==========================================
     sum_diff = 0.0
     sum_pair_global = 0.0 + 0.0im # sum (P_x - P_y)/2
+    sum_pair_local = 0.0 
     
     # 重新刷新 fermi factors (确保是最新的)
     @inbounds @simd for n in 1:(2*N)
@@ -208,13 +210,15 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
         # 2. Pair order parameter (from fermions): J * (P_x - P_y)/2
         # 注意公式里的 J 因子
         term = p.J * 0.5 * (P_x - P_y)
+        sum_pair_local += abs(term)
         sum_pair_global += term
     end
     
     val_diff = sum_diff / N
     val_pair = abs(sum_pair_global / N)
+    val_localpair = sum_pair_local / N
     
-    return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,val_diff, val_pair)
+    return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,val_diff, val_pair, val_localpair)
 end
 
 
@@ -296,6 +300,7 @@ struct SpectrumResult
     optical_conductivity::Vector{Float64}   # Re σ(ω)
     dos_ω_grid::Vector{Float64}             # DOS 用的完整网格
     dos::Vector{Float64}                    # N(ω)
+    dos_AN::Vector{Float64}                  # AN 点的 DOS
     
     # 动量解析的谱权重 (可选，数据量巨大，通常只存特定路径或求和)
     # 我们这里存: A(k, ω=0) (Fermi Surface) 和 DOS.
@@ -425,7 +430,8 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
     # DOS 网格：从 -ω_max 到 +ω_max (或者稍微大一点，覆盖整个能带)
     # 我们这里使用对称的区间
     dos_ω_grid = collect(-p.ω_max : p.dω : p.ω_max)
-    dos_vals = zeros(Float64, length(dos_ω_grid)) # Reuse ω grid for DOS positive side
+    dos_vals = zeros(Float64, length(dos_ω_grid))
+    dos_AN_vals = zeros(Float64, length(dos_ω_grid))
     
     # A(k, w=0) map
     # A(k, 0) ~ sum_n |u_n(k)|^2 delta(0 - En)
@@ -447,8 +453,42 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
         for (iw, w) in enumerate(dos_ω_grid)
             dos_vals[iw] += w_n * lorentzian(w - En, p.η)
         end
+
+        # 3. DOS at Antinodal Point
+        # AN point in 2D square lattice: (π, 0) or (0, π)
+        # sum_{x,y} u(x,y) * (-1)^x  and  sum_{x,y} u(x,y) * (-1)^y
+        sum_pi_0 = ComplexF64(0.0) # k=(pi, 0)
+        sum_0_pi = ComplexF64(0.0) # k=(0, pi)
+        @inbounds for i in 1:N
+            # 将 i 转换为 (x, y) 坐标，1-based
+            x = mod1(i, p.Lx)
+            y = cld(i, p.Lx)
+            val = U[i, n]
+            # (-1)^x
+            if iseven(x)
+                sum_pi_0 += val
+            else
+                sum_pi_0 -= val
+            end
+            # (-1)^y
+            if iseven(y)
+                sum_0_pi += val
+            else
+                sum_0_pi -= val
+            end
+        end
+
+        # 计算谱权重 |u_k|^2
+        # 注意归一化系数 1/sqrt(N) 平方后为 1/N
+        weight_AN = 0.5 * (abs2(sum_pi_0) + abs2(sum_0_pi)) / N
+
+        # 累加到 dos_AN (使用相同的 Lorentzian 展宽)
+        for (iw, w) in enumerate(dos_ω_grid)
+            dos_AN_vals[iw] += weight_AN * lorentzian(w - En, p.η)
+        end
         
-        # 3. Spectral Function A(k, 0) (Fermi Surface intensity)
+        
+        # 4. Spectral Function A(k, 0) (Fermi Surface intensity)
         # Check if En is close to 0 (within η)
         weight_at_zero = lorentzian(0.0 - En, p.η)
         
@@ -481,6 +521,6 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
     
     return SpectrumResult(superfluid_stiffness, dc_cond, 
                           ω_grid, σ_ω, 
-                          dos_ω_grid, dos_vals, 
+                          dos_ω_grid, dos_vals, dos_AN_vals, 
                           ak_map)
 end

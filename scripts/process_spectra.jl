@@ -8,11 +8,12 @@ using DwaveHMC # 加载你的包以识别 ModelParameters 类型
 # 设置
 # ==========================================
 # 这里填写你刚才运行的数据目录
-target_dir = "data/beta_test_L24_J0.8_imp0.04/beta_5000.0" 
+target_dir = "data/T_scan_L24_J0.8_W1.0_imp0.0_mu_-1.4/T_0.0001" 
 jld_file = joinpath(target_dir, "spectra_bins.jld2")
 
 output_opt = joinpath(target_dir, "processed_opt_cond.csv")
 output_dos = joinpath(target_dir, "processed_dos.csv")
+output_dos_AN = joinpath(target_dir, "processed_dos_AN.csv")
 output_ak = joinpath(target_dir, "processed_ak0.csv")
 
 # ==========================================
@@ -73,6 +74,7 @@ jldopen(jld_file, "r") do file
     # 2. 遍历所有 bins 收集数据
     list_opt = Vector{Vector{Float64}}()
     list_dos = Vector{Vector{Float64}}()
+    list_dos_AN = Vector{Vector{Float64}}()
     list_ak = Vector{Matrix{Float64}}()
     
     # JLD2 的 keys 是 group names
@@ -84,6 +86,7 @@ jldopen(jld_file, "r") do file
             g = file[key]
             push!(list_opt, g["opt_cond"])
             push!(list_dos, g["dos"])
+            push!(list_dos_AN, g["dos_AN"])
             push!(list_ak, g["A_k0"])
             count += 1
         end
@@ -94,6 +97,7 @@ jldopen(jld_file, "r") do file
     # 3. 计算统计量
     mean_opt, err_opt = calc_stats(list_opt)
     mean_dos, err_dos = calc_stats(list_dos)
+    mean_dos_AN, err_dos_AN = calc_stats(list_dos_AN)
     mean_ak, err_ak = calc_stats(list_ak)
     
     # 4. 写入 CSV
@@ -123,6 +127,14 @@ jldopen(jld_file, "r") do file
         end
     end
     println("Saved: $output_dos")
+    
+    open(output_dos_AN, "w") do io
+        println(io, "omega,DOS_AN,Error")
+        for i in 1:length(mean_dos_AN)
+            @printf(io, "%.6f,%.6f,%.6f\n", dos_omega_grid[i], mean_dos_AN[i], err_dos_AN[i])
+        end
+    end
+    println("Saved: $output_dos_AN")
     
     # --- A(k, 0) Fermi Surface ---
     # 保存为: kx_idx, ky_idx, kx, ky, A_val, Error
