@@ -29,7 +29,6 @@ struct ModelParameters
     # HMC / 相互作用参数
     β::Float64   # 逆温度
     J::Float64      # 耦合常数
-    dt::Float64     # MD 时间步长
     mass::Float64   # HMC 虚拟质量
     
     # 预计算的邻居列表 (用空间换时间)
@@ -42,13 +41,13 @@ struct ModelParameters
     η::Float64          # 展宽因子 (Broadening)
     ω_min::Float64      # 光电导频率下限
     ω_max::Float64      # 光电导频率上限
-    dω::Float64         # 频率步长
+    Δω::Float64         # 频率步长
     n_ω::Int            # 频率点数
 end
 
 # 构造函数：输入基本参数，自动计算 N 和邻居表
-function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, dt, mass;
-                         eta_scale::Float64=2.0, domega::Float64=0.01) # eta_scale * (W_band / N)
+function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, mass;
+                         η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0)
     N = Lx * Ly
     # 初始化邻居表
     # 约定方向：1: +x, 2: +y, 3: -x, 4: -y
@@ -80,21 +79,15 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, dt, mass;
         nnn_table[i, 4] = get_idx(x + 1, y - 1)
     end
     
-    # --- 参数初始化 ---
-    est_bandwidth = 5.0 * abs(t)
-    η = eta_scale * (est_bandwidth / N)
-    
-    # 频率网格 0 到 t (或者更大)
     ω_min = η
-    ω_max = est_bandwidth * 0.5 # 通常计算到半带宽即可
-    n_ω = floor(Int, (ω_max - ω_min) / domega) + 1
+    n_ω = floor(Int, (ω_max - ω_min) / Δω) + 1
     
     return ModelParameters(Lx, Ly, N, 
         Float64(t), Float64(tp), Float64(μ), 
         Float64(W), Float64(n_imp), 
-        Float64(β), Float64(J), Float64(dt), Float64(mass),
+        Float64(β), Float64(J), Float64(mass),
         nn_table, nnn_table,
-        Float64(η), Float64(ω_min), Float64(ω_max), Float64(domega), n_ω)
+        Float64(η), Float64(ω_min), Float64(ω_max), Float64(Δω), n_ω)
 end
 
 # ---------------------------------------------------------

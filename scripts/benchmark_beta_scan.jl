@@ -62,7 +62,7 @@ function run_beta_scan()
     acc_rates    = zeros(n_points) # 存储接受率
     
     # 4. 初始化
-    p_init = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, betas[1], J, dt_dummy, mass)
+    p_init = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, betas[1], J, mass)
     state = initialize_state(p_init)
     cache = initialize_cache(p_init)
     
@@ -78,7 +78,7 @@ function run_beta_scan()
     println("-"^75)
     
     for (idx, β) in enumerate(betas)
-        p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, dt_dummy, mass)
+        p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass)
         
         # 热化
         dt_therm = calc_optimal_dt(p.β, p.J, p.mass, Nt_therm)

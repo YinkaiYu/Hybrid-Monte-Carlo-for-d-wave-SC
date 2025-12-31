@@ -393,7 +393,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
     # DC: ω -> 0 limit.
     
     # Grid
-    ω_grid = collect(p.ω_min : p.dω : p.ω_max)
+    ω_grid = collect(p.ω_min : p.Δω : p.ω_max)
     σ_ω = zeros(Float64, length(ω_grid))
     dc_cond = 0.0
     
@@ -429,7 +429,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
     # ------------------------------------------------
     # DOS 网格：从 -ω_max 到 +ω_max (或者稍微大一点，覆盖整个能带)
     # 我们这里使用对称的区间
-    dos_ω_grid = collect(-p.ω_max : p.dω : p.ω_max)
+    dos_ω_grid = collect(-p.ω_max : p.Δω : p.ω_max)
     dos_vals = zeros(Float64, length(dos_ω_grid))
     dos_AN_vals = zeros(Float64, length(dos_ω_grid))
     

@@ -16,7 +16,7 @@ end
 """
     run_simulation(p::ModelParameters, out_dir::String; 
                    n_therm::Int=100, 
-                   n_sweep::Int=500, 
+                   n_measure::Int=500, 
                    Nt_therm_init::Int=10, 
                    Nt_measure::Int=5,
                    measure_transport_freq::Int=10,
@@ -26,18 +26,19 @@ end
 
 # 参数
 - `n_therm`: 热化步数
-- `n_sweep`: 测量步数
+- `n_measure`: 测量步数
 - `Nt_therm_init`: 热化初始 Leapfrog 步数
 - `measure_transport_freq`: 每隔多少个 MC 步进行一次重量级测量（输运/谱）
 - `bin_size`: 谱学数据分箱大小。即累积 `bin_size` 次测量后，求平均并存入 JLD2 一次。
 """
 function run_simulation(p::ModelParameters, out_dir::String; 
                         n_therm::Int=100, 
-                        n_sweep::Int=500, 
+                        n_measure::Int=500, 
                         Nt_therm_init::Int=10, 
                         Nt_measure::Int=5,
                         measure_transport_freq::Int=1,
-                        bin_size::Int=5)
+                        bin_size::Int=5,
+                        verbose::Bool=true)
     
     # --- 1. 环境准备 ---
     if !isdir(out_dir)
@@ -58,9 +59,11 @@ function run_simulation(p::ModelParameters, out_dir::String;
     function tee_println(msg)
         ts = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
         full_msg = "[$ts] $msg"
-        println(full_msg)
         println(f_log, full_msg)
         flush(f_log)
+        if verbose
+            println(full_msg)
+        end
     end
     
     # 写入 CSV 表头
@@ -71,7 +74,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     
     tee_println("Starting Simulation...")
     tee_println("System: $(p.Lx)x$(p.Ly), β=$(p.β), n_imp=$(p.n_imp), J=$(p.J)")
-    tee_println("Config: Therm=$n_therm, Sweep=$n_sweep, TransFreq=$measure_transport_freq, BinSize=$bin_size")
+    tee_println("Config: Therm=$n_therm, Sweep=$n_measure, TransFreq=$measure_transport_freq, BinSize=$bin_size")
 
     # --- 2. 初始化 ---
     tee_println("Initializing State...")
@@ -83,7 +86,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     diagonalize_H_BdG!(cache, p)
     
     # 初始化 JLD2 文件 (写入参数信息)
-    jldsave(spectra_jld_path; params=p, omega_grid=collect(p.ω_min:p.dω:p.ω_max))
+    jldsave(spectra_jld_path; params=p, omega_grid=collect(p.ω_min:p.Δω:p.ω_max))
 
     # --- 3. 热化阶段 (Adaptive Thermalization) ---
     Nt_current = Nt_therm_init
@@ -145,7 +148,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_dos_AN = Vector{Float64}()
     accum_Ak0 = Matrix{Float64}(undef, 0, 0)
     
-    for i in 1:n_sweep
+    for i in 1:n_measure
         # 1. HMC 演化
         acc, dH = hmc_sweep!(cache, p, state; Nt=Nt_measure, dt=dt_meas)
         if acc acc_total += 1 end
@@ -220,7 +223,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
         # 进度打印
         if i % 10 == 0
              rate = acc_total / i
-             tee_println(@sprintf("Meas %d/%d. Acc=%.2f. E=%.4f", i, n_sweep, rate, obs.total_energy))
+             tee_println(@sprintf("Meas %d/%d. Acc=%.2f. E=%.4f", i, n_measure, rate, obs.total_energy))
         end
     end
     

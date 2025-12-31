@@ -75,7 +75,7 @@ function process_single_directory(target_dir)
         omega_grid = file["omega_grid"] 
         
         # 重建 DOS 网格 (对称)
-        dos_omega_grid = collect(-params.ω_max : params.dω : params.ω_max)
+        dos_omega_grid = collect(-params.ω_max : params.Δω : params.ω_max)
         
         println("  Params: L=$(params.Lx)x$(params.Ly), Beta=$(params.β)")
         

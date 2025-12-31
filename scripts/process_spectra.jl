@@ -8,7 +8,7 @@ using DwaveHMC # 加载你的包以识别 ModelParameters 类型
 # 设置
 # ==========================================
 # 这里填写你刚才运行的数据目录
-target_dir = "data/T_scan_L24_J0.8_W1.0_imp0.0_mu_-1.4/T_0.0001" 
+target_dir = "data/test_spectra_L24_J0.8_W1.0_imp0.0_T0.001_mu-1.4" 
 jld_file = joinpath(target_dir, "spectra_bins.jld2")
 
 output_opt = joinpath(target_dir, "processed_opt_cond.csv")
@@ -67,7 +67,7 @@ jldopen(jld_file, "r") do file
     omega_grid = file["omega_grid"] # Re sigma 的网格 (ω > 0)
     
     # 重建 DOS 网格 (对称)
-    dos_omega_grid = collect(-params.ω_max : params.dω : params.ω_max)
+    dos_omega_grid = collect(-params.ω_max : params.Δω : params.ω_max)
     
     println("Params: L=$(params.Lx)x$(params.Ly), Beta=$(params.β)")
     

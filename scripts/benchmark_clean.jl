@@ -63,11 +63,11 @@ function run_benchmark_clean()
 
     # 采样参数
     n_therm = 50 # 热化样本数
-    n_sweep = 100 # 测量样本数
+    n_measure = 100 # 测量样本数
     Nt_therm = 20 # 热化时的 leapfrog 步数
     Nt_measure = 5 # 测量时的 leapfrog 步数
     
-    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, dt_dummy, mass)
+    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass)
     
     # 初始化
     state = initialize_state(p)
@@ -93,7 +93,7 @@ function run_benchmark_clean()
     dt_meas = calc_optimal_dt(p.β, p.J, p.mass, Nt_measure)
     Δ_history = Float64[]
     
-    for i in 1:n_sweep
+    for i in 1:n_measure
         hmc_sweep!(cache, p, state; Nt=Nt_measure, dt=dt_meas)
         obs = measure_observables(cache, p, state)
         println(@sprintf("Sweep %d: |Δ_diff| = %.6f, |Δ_pair| = %.6f, |Δ_global| = %.6f", i, obs.Δ_diff, obs.Δ_pair, obs.Δ_global))

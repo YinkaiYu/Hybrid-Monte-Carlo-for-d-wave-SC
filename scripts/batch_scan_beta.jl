@@ -13,7 +13,10 @@ t, tp = 1.0, -0.35
 W, n_imp = 1.0, 0.0
 J = 0.8
 mass = 1.0
-dt_dummy = 0.05 # 占位符，会被自动计算覆盖
+
+η = 8.0 / (Lx*Ly) * 1.0
+Δω = 0.2 * η
+ω_max = 4.0
 
 # 扫描 Beta
 beta_start = 0.01
@@ -23,7 +26,7 @@ betas = 10 .^ range(log10(beta_start), stop=log10(beta_end), length=n_points)
 
 # 模拟控制参数
 n_therm = 20
-n_sweep = 100
+n_measure = 100
 Nt_therm = 20
 Nt_measure = 6
 
@@ -51,7 +54,7 @@ for (i, β) in enumerate(betas)
     
     # 构造参数
     # 注意：eta_scale 和 domega 即使不测光谱也需要给默认值
-    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, dt_dummy, mass, eta_scale=2.0, domega=0.01)
+    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass, η=η, Δω=Δω, ω_max=ω_max)
     
     # 子目录
     work_dir = joinpath(base_dir, "beta_$(round(β, digits=3))")
@@ -60,7 +63,7 @@ for (i, β) in enumerate(betas)
     # 这里的日志会输出到 work_dir/simulation.log，屏幕上也会有简略输出
     run_simulation(p, work_dir; 
                    n_therm=n_therm, 
-                   n_sweep=n_sweep, 
+                   n_measure=n_measure, 
                    Nt_therm_init=Nt_therm, 
                    Nt_measure=Nt_measure,
                    measure_transport_freq=measure_freq,
