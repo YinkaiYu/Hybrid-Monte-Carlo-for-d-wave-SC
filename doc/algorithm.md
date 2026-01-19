@@ -18,7 +18,7 @@ where $t_{ij}$ is the hopping integral between sites $i$ and $j$ on a square lat
 
 在程序中我们需要定义的是 Nambu basis 下的 BdG 哈密顿量矩阵 $H_{\mathrm{BdG}}$，它与 BdG 哈密顿量的关系如下：
 $$
-\hat{H}_{\mathrm{BdG}}\equiv\frac12 \Psi^\dagger H_{\mathrm{BdG}} \Psi \,,
+\hat{H}_{\mathrm{BdG}}\equiv \Psi^\dagger H_{\mathrm{BdG}} \Psi \,,
 $$
 $$
 \Psi=
@@ -29,8 +29,8 @@ $$
 \,, \quad
 H_{\mathrm{BdG}}=
 \begin{pmatrix}
- h & \Delta\\
- \Delta^\dagger & -h^*
+ h & \Delta/2\\
+ \Delta^\dagger/2 & -h^*
 \end{pmatrix}
 \,,
 $$
@@ -42,7 +42,7 @@ $$
 H_{\mathrm{HMC}}=
 \frac{1}{2m}\sum_{\braket{ij}}|\pi_{ij}|^2
 +\frac{\beta}{2J}\sum_{\braket{ij}}|\Delta_{ij}|^2
-- \mathrm{tr}\, \mathrm{ln}\, \left(1+e^{-\beta H_{\mathrm{BdG}}}\right)
+-\mathrm{tr}\, \mathrm{ln}\, \left(1+e^{-\beta H_{\mathrm{BdG}}}\right)
 \,.
 $$
 $$
@@ -104,3 +104,15 @@ HMC主程序:
 - 可以同时跑多条马尔可夫链，使用MPI并行，或者 `Distributed `标准库。
 - 近邻、次近邻列表可以提前构建好，包括pairing项的index列表，也提前构建好。
 - 由于 `H_BdG` 的粒子空穴对称性，其本征值是正负成对出现的，可以只对正能量求和，也许更数值稳定。建议使用log1pexp或者log1p函数避免数值不稳定。
+
+## Leapfrog 积分参数取值
+
+注意到，运动方程可以写为：
+$$
+\frac{\partial^2}{\partial t^2}\Delta_{ij}=-\frac{\beta}{4mJ}\left(\Delta_{ij}-J\braket{ c_{i\uparrow} c_{j\downarrow} - c_{i\downarrow} c_{j\uparrow}}\right)
+$$
+这类似于周期为 $T=4\pi\sqrt{\frac{mJ}{\beta}}$ 的谐振子。通常 leapfrog 积分时，$N_t \delta t=T/2$ 效率最高，因此可以在程序中可以设置时间步长为
+$$
+\delta t=\frac{2\pi}{N_t} \sqrt{\frac{mJ}{\beta}}
+$$
+在初始的蒙卡热化阶段，步长可以取得更小一些。
