@@ -4,6 +4,7 @@
 - Core library lives in `src/` with `DwaveHMC.jl` exporting the public API and submodules `Types`, `Hamiltonian`, `HMC`, `Observables`, and `Simulation`.
 - Tests and micro-benchmarks sit in `test/` (`test_hmc.jl`, `test_simulation.jl`, `benchmark_*`). Treat files prefixed with `benchmark_` as opt-in perf checks.
 - Batch runners and post-processing tools are in `scripts/` (e.g., `batch_scan_beta.jl`, `batch_process_spectra.jl`); most write results to `data/`.
+- Production runs and HPC post-processing live under `projectHPC/` (e.g., `run_conf.jl`, `example/*`).
 - Reference outputs and spectra/transport datasets are under `data/`; avoid committing new large artifacts.
 - Background theory and algorithm notes live in `doc/`.
 

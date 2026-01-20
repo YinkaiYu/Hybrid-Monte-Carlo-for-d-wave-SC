@@ -105,17 +105,39 @@ for t_dir in T_dirs
         
         if names !== nothing
             real_n_conf += 1
+            conf_map = Dict{String, Float64}()
             for (k, v) in zip(names, vals)
-                if !haskey(obs_dict, k) obs_dict[k] = Float64[] end
-                push!(obs_dict[k], v)
+                key = string(k)
+                conf_map[key] = v
+                if !haskey(obs_dict, key) obs_dict[key] = Float64[] end
+                push!(obs_dict[key], v)
+            end
+
+            # Binder ratios from per-conf means
+            if haskey(conf_map, "D2") && haskey(conf_map, "D4")
+                d2 = conf_map["D2"]
+                if d2 > 0
+                    b_global = 1.0 - conf_map["D4"] / (2.0 * d2 * d2)
+                    if !haskey(obs_dict, "B_global") obs_dict["B_global"] = Float64[] end
+                    push!(obs_dict["B_global"], b_global)
+                end
+            end
+            if haskey(conf_map, "Sum_d2") && haskey(conf_map, "Sum_d4")
+                sd2 = conf_map["Sum_d2"]
+                if sd2 > 0
+                    b_local = 1.0 - conf_map["Sum_d4"] / (2.0 * sd2 * sd2)
+                    if !haskey(obs_dict, "B_local") obs_dict["B_local"] = Float64[] end
+                    push!(obs_dict["B_local"], b_local)
+                end
             end
             
             # 尝试读取 transport (可选)
             t_names, t_vals = read_conf_robust(joinpath(c_dir, "transport.csv"))
             if t_names !== nothing
                 for (k, v) in zip(t_names, t_vals)
-                    if !haskey(obs_dict, k) obs_dict[k] = Float64[] end
-                    push!(obs_dict[k], v)
+                    key = string(k)
+                    if !haskey(obs_dict, key) obs_dict[key] = Float64[] end
+                    push!(obs_dict[key], v)
                 end
             end
         end

@@ -30,6 +30,7 @@ function process_single_config(jld_path)
             sum_dos = copy(g1["dos"])
             sum_dos_AN = copy(g1["dos_AN"])
             sum_ak = copy(g1["A_k0"])
+            sum_akpath = haskey(g1, "A_kpath") ? copy(g1["A_kpath"]) : nothing
             count = 1
             
             # 累加后续 bin
@@ -39,16 +40,32 @@ function process_single_config(jld_path)
                 sum_dos .+= g["dos"]
                 sum_dos_AN .+= g["dos_AN"]
                 sum_ak .+= g["A_k0"]
+                if sum_akpath !== nothing
+                    if !haskey(g, "A_kpath")
+                        return nothing
+                    end
+                    sum_akpath .+= g["A_kpath"]
+                end
                 count += 1
             end
             
             p = file["params"]
+            meta = Dict{String, Any}()
+            if haskey(file, "omega_grid") meta["omega_grid"] = file["omega_grid"] end
+            if haskey(file, "dos_omega_grid") meta["dos_omega_grid"] = file["dos_omega_grid"] end
+            if haskey(file, "kpath_kx") meta["kpath_kx"] = file["kpath_kx"] end
+            if haskey(file, "kpath_ky") meta["kpath_ky"] = file["kpath_ky"] end
+            if haskey(file, "kpath_kx_idx") meta["kpath_kx_idx"] = file["kpath_kx_idx"] end
+            if haskey(file, "kpath_ky_idx") meta["kpath_ky_idx"] = file["kpath_ky_idx"] end
             
             # 计算平均
-            res = (sum_opt ./ count, sum_dos ./ count, sum_dos_AN ./ count, sum_ak ./ count, p)
+            res = (opt=sum_opt ./ count, dos=sum_dos ./ count, dos_AN=sum_dos_AN ./ count,
+                   ak0=sum_ak ./ count,
+                   akpath=sum_akpath === nothing ? nothing : (sum_akpath ./ count),
+                   params=p, meta=meta)
             
             # 检查 NaN
-            if any(isnan, res[1]) || any(isnan, res[2])
+            if any(isnan, res.opt) || any(isnan, res.dos)
                 return nothing
             end
             
@@ -87,18 +104,24 @@ function process_T_directory(dir_path)
     samples_dos = []
     samples_dos_AN = []
     samples_ak = []
+    samples_akpath = []
     last_params = nothing
+    last_meta = Dict{String, Any}()
     
     # 收集有效样本
     for c_dir in conf_dirs
         jld_path = joinpath(c_dir, "spectra_bins.jld2")
         res = process_single_config(jld_path)
         if res !== nothing
-            push!(samples_opt, res[1])
-            push!(samples_dos, res[2])
-            push!(samples_dos_AN, res[3])
-            push!(samples_ak, res[4])
-            last_params = res[5]
+            push!(samples_opt, res.opt)
+            push!(samples_dos, res.dos)
+            push!(samples_dos_AN, res.dos_AN)
+            push!(samples_ak, res.ak0)
+            if res.akpath !== nothing
+                push!(samples_akpath, res.akpath)
+            end
+            last_params = res.params
+            last_meta = res.meta
         end
     end
     
@@ -114,11 +137,18 @@ function process_T_directory(dir_path)
     final_dos, err_dos = calc_final_stats(samples_dos)
     final_dos_AN, err_dos_AN = calc_final_stats(samples_dos_AN)
     final_ak, err_ak = calc_final_stats(samples_ak)
+    final_akpath = nothing
+    err_akpath = nothing
+    if !isempty(samples_akpath)
+        final_akpath, err_akpath = calc_final_stats(samples_akpath)
+    end
     
     # 重建网格
     p = last_params
-    omega_grid = collect(p.ω_min : p.Δω : p.ω_max)
-    dos_omega_grid = collect(-p.ω_max : p.Δω : p.ω_max)
+    omega_grid = haskey(last_meta, "omega_grid") ? last_meta["omega_grid"] :
+                 collect(p.ω_min : p.Δω : p.ω_max)
+    dos_omega_grid = haskey(last_meta, "dos_omega_grid") ? last_meta["dos_omega_grid"] :
+                     collect(-p.ω_max : p.Δω : p.ω_max)
     
     # 防御性修正网格长度
     if length(omega_grid) != length(final_opt)
@@ -156,6 +186,33 @@ function process_T_directory(dir_path)
                 if ky > π ky -= 2π end
                 @printf(io, "%d,%d,%.6f,%.6f,%.6e,%.6e\n", 
                         x, y, kx, ky, final_ak[x, y], err_ak[x, y])
+            end
+        end
+    end
+
+    if final_akpath !== nothing && err_akpath !== nothing
+        kx_val = haskey(last_meta, "kpath_kx") ? last_meta["kpath_kx"] : nothing
+        ky_vals = haskey(last_meta, "kpath_ky") ? last_meta["kpath_ky"] : nothing
+        ky_indices = haskey(last_meta, "kpath_ky_idx") ? last_meta["kpath_ky_idx"] : nothing
+        if kx_val === nothing || ky_vals === nothing
+            _, ky_indices_fallback, kx_val_fallback, ky_vals_fallback = DwaveHMC.antinode_kpath(p)
+            kx_val = kx_val === nothing ? kx_val_fallback : kx_val
+            ky_vals = ky_vals === nothing ? ky_vals_fallback : ky_vals
+            ky_indices = ky_indices === nothing ? ky_indices_fallback : ky_indices
+        end
+        if ky_indices === nothing
+            ky_indices = collect(1:length(ky_vals))
+        end
+
+        open(joinpath(dir_path, "spectra_akpath.csv"), "w") do io
+            println(io, "k_idx,ky_idx,kx,ky,omega,A_val,Error")
+            for (k_idx, ky_idx) in enumerate(ky_indices)
+                ky = ky_vals[k_idx]
+                for i in 1:length(dos_omega_grid)
+                    @printf(io, "%d,%d,%.6f,%.6f,%.6f,%.6e,%.6e\n",
+                            k_idx, ky_idx, kx_val, ky, dos_omega_grid[i],
+                            final_akpath[k_idx, i], err_akpath[k_idx, i])
+                end
             end
         end
     end
