@@ -1,0 +1,104 @@
+using Distributed
+using Printf
+using Random
+
+# ---------------------------------------------------------
+# 1. 自动检测并启动并行进程
+# ---------------------------------------------------------
+if nprocs() == 1
+    # 读取 SLURM 分配的核数 (例如 4)
+    slurm_ntasks = parse(Int, get(ENV, "SLURM_NTASKS", "1"))
+    
+    # [修改前] 留一个核给 Master
+    # workers_to_add = max(0, slurm_ntasks - 1)
+    
+    # [修改后] 不留核！直接启动与核数相等的 Worker
+    # 这样总进程数 = slurm_ntasks + 1 (Master)
+    # 因为 Master 几乎不耗 CPU，所以这是安全的
+    println("Master: Slurm assigned $slurm_ntasks cores. Launching $slurm_ntasks workers (Oversubscription).")
+    workers_to_add = slurm_ntasks
+    
+    if workers_to_add > 0
+        addprocs(workers_to_add)
+    end
+end
+
+println("Master process $(myid()) started. Total processes: $(nprocs())")
+println("Workers: $(workers())")
+flush(stdout)
+
+# ---------------------------------------------------------
+# 2. 环境加载
+# ---------------------------------------------------------
+const PROJECT_ROOT = @__DIR__
+@everywhere begin
+    using Pkg
+    Pkg.activate($PROJECT_ROOT) 
+    using DwaveHMC
+    using Random
+    using Printf
+end
+
+# ---------------------------------------------------------
+# 3. 读取参数
+# ---------------------------------------------------------
+# 获取 params.jl 在当前工作目录下的绝对路径
+params_path = joinpath(pwd(), "params.jl")
+if !isfile(params_path)
+    error("params.jl not found at $params_path")
+end
+# 使用绝对路径 include
+include(params_path)
+
+println("Parameters loaded. T = $(T), Total Configs = $(N_conf)")
+flush(stdout)
+
+# ---------------------------------------------------------
+# 4. Worker 任务 (带静默模式)
+# ---------------------------------------------------------
+@everywhere function worker_task(seed::Int, p_base::ModelParameters, 
+                                 n_therm, n_measure, 
+                                 Nt_therm_init, Nt_measure, 
+                                 measure_transport_freq, bin_size)
+    out_dir = "conf_$(seed)"
+    Random.seed!(seed)
+    
+    # 仅在开始和结束时在 job.out 留痕
+    println("Processing seed=$seed ...")
+    flush(stdout)
+    
+    try
+        # verbose=false: 详细过程写入 log 文件，不输出到 job.out
+        run_simulation(p_base, out_dir; 
+                       n_therm=n_therm, 
+                       n_measure=n_measure, 
+                       Nt_therm_init=Nt_therm_init, 
+                       Nt_measure=Nt_measure,
+                       measure_transport_freq=measure_transport_freq,
+                       bin_size=bin_size,
+                       verbose=false) 
+        
+        return true
+    catch e
+        println("ERROR in seed=$seed: $e")
+        return false
+    end
+end
+
+# ---------------------------------------------------------
+# 5. 任务分发
+# ---------------------------------------------------------
+results = pmap(1:N_conf) do seed
+    worker_task(seed, p, 
+                n_therm, n_measure, 
+                Nt_therm_init, Nt_measure, 
+                measure_transport_freq, bin_size)
+end
+
+success_count = count(results)
+println("All tasks completed. Success: $(success_count)/$(N_conf)")
+flush(stdout)
+
+if success_count != N_conf
+    exit(1) # 如果有任务失败，让作业状态显示为 Failed
+end
