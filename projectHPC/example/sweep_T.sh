@@ -3,33 +3,33 @@ set -e
 
 # ================= 配置区域 =================
 # 1. 扫描参数
-T_list=(0.001 0.002 0.004 0.008 0.01 0.015 0.02 0.025 0.03 0.035 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2 0.25 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1)
+T_list=(0.001 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2)
 
 # 2. 并行与作业参数
-queue='node6348'
+queue='fat6348'
 N_NODES=1   # 每个作业申请多少个节点
 N_CORES=4   # 每个作业申请多少个核
-N_CONFS=16  # 每个温度跑多少个构型
+N_CONFS=8   # 每个温度跑多少个构型
 PROJECT_ROOT=/home/zxli_1/yyk2025/2511_dWaveBcs/20251231_sweep-T
 
 # 3. 物理参数
-L=40
+L=20
 t=1.0
 tp=-0.35
-mu=-1.08
+mu=-1.23359
 W=1.0
 n_imp=0.0
 J=0.8
 mass=1.0
 
 # 4. 测量参数
-omega_max=4.0
+omega_max=0.8
 
 # 5. HMC参数
-n_therm=100
-n_measure=500
-Nt_therm_init=16
-Nt_measure=6
+n_therm=50
+n_measure=200
+Nt_therm_init=26
+Nt_measure=8
 measure_transport_freq=1
 bin_size=5
 # ===========================================

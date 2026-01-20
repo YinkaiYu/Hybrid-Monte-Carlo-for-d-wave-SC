@@ -69,7 +69,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     
     # 写入 CSV 表头
     # 基础物理量
-    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair,D2,D4,Sum_d2,Sum_d4")
+    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair,D2,D4,Avg_d2,Avg_d4")
     # 输运标量
     println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
     
@@ -127,7 +127,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
             if rate < 0.60
                 Nt_current += 2 # 步子太大了，多切几份
             elseif rate > 0.95 && Nt_current > 4
-                Nt_current -= 1 # 步子太小了，浪费算力
+                Nt_current -= 2 # 步子太小了，浪费算力
             end
             
             if Nt_current != old_Nt
@@ -174,7 +174,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 i, acc, dH, obs.total_energy, 
                 obs.Δ_amp, obs.Δ_local, obs.Δ_global, obs.S_Δ, obs.hole_conc,
                 obs.Δ_diff, obs.Δ_pair, obs.Δ_localpair,
-                obs.D2, obs.D4, obs.d2_sum, obs.d4_sum)
+                obs.D2, obs.D4, obs.d2_avg, obs.d4_avg)
         write(f_obs, line)
         flush(f_obs) # 实时落盘
 

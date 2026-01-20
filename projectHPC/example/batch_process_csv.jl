@@ -122,10 +122,10 @@ for t_dir in T_dirs
                     push!(obs_dict["B_global"], b_global)
                 end
             end
-            if haskey(conf_map, "Sum_d2") && haskey(conf_map, "Sum_d4")
-                sd2 = conf_map["Sum_d2"]
+            if haskey(conf_map, "Avg_d2") && haskey(conf_map, "Avg_d4")
+                sd2 = conf_map["Avg_d2"]
                 if sd2 > 0
-                    b_local = 1.0 - conf_map["Sum_d4"] / (2.0 * sd2 * sd2)
+                    b_local = 1.0 - conf_map["Avg_d4"] / (2.0 * sd2 * sd2)
                     if !haskey(obs_dict, "B_local") obs_dict["B_local"] = Float64[] end
                     push!(obs_dict["B_local"], b_local)
                 end

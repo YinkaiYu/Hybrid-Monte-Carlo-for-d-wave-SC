@@ -79,8 +79,8 @@ struct ObservablesResult
     Δ_localpair::Float64
     D2::Float64      # |<D>|^2
     D4::Float64      # |<D>|^4
-    d2_sum::Float64  # sum_i |<d_i>|^2
-    d4_sum::Float64  # sum_i |<d_i>|^4
+    d2_avg::Float64  # (1/N) * sum_i |<d_i>|^2
+    d4_avg::Float64  # (1/N) * sum_i |<d_i>|^4
     d_local::Vector{ComplexF64} # 每个格点的 <d_i>
 end
 
@@ -232,10 +232,12 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     val_localpair = sum_pair_local / N
     D2 = abs2(D)
     D4 = D2 * D2
+    d2_avg = sum_d2 / N
+    d4_avg = sum_d4 / N
     
     return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,
                              val_diff, val_pair, val_localpair,
-                             D2, D4, sum_d2, sum_d4, d_local)
+                             D2, D4, d2_avg, d4_avg, d_local)
 end
 
 
