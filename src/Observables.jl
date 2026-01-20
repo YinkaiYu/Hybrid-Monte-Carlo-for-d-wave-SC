@@ -77,6 +77,11 @@ struct ObservablesResult
     Δ_diff::Float64
     Δ_pair::Float64
     Δ_localpair::Float64
+    D2::Float64      # |<D>|^2
+    D4::Float64      # |<D>|^4
+    d2_sum::Float64  # sum_i |<d_i>|^2
+    d4_sum::Float64  # sum_i |<d_i>|^4
+    d_local::Vector{ComplexF64} # 每个格点的 <d_i>
 end
 
 """
@@ -170,6 +175,9 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     sum_diff = 0.0
     sum_pair_global = 0.0 + 0.0im # sum (P_x - P_y)/2
     sum_pair_local = 0.0 
+    sum_d2 = 0.0
+    sum_d4 = 0.0
+    d_local = cache.d_local_cache
     
     # 重新刷新 fermi factors (确保是最新的)
     @inbounds @simd for n in 1:(2*N)
@@ -210,15 +218,24 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
         # 2. Pair order parameter (from fermions): J * (P_x - P_y)/2
         # 注意公式里的 J 因子
         term = p.J * 0.5 * (P_x - P_y)
+        d_local[i] = term
         sum_pair_local += abs(term)
         sum_pair_global += term
+        abs2_term = abs2(term)
+        sum_d2 += abs2_term
+        sum_d4 += abs2_term * abs2_term
     end
     
     val_diff = sum_diff / N
-    val_pair = abs(sum_pair_global / N)
+    D = sum_pair_global / N
+    val_pair = abs(D)
     val_localpair = sum_pair_local / N
+    D2 = abs2(D)
+    D4 = D2 * D2
     
-    return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,val_diff, val_pair, val_localpair)
+    return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,
+                             val_diff, val_pair, val_localpair,
+                             D2, D4, sum_d2, sum_d4, d_local)
 end
 
 
@@ -287,6 +304,33 @@ end
 # ------------------------------------------------
 
 """
+    antinode_kpath(p::ModelParameters)
+
+返回从 (π, 0) 到 (π, π) 的离散 k 路径索引与动量值。
+如果 Lx/Ly 为奇数，取最接近且不超过 π 的格点。
+"""
+function antinode_kpath(p::ModelParameters)
+    kx_idx = fld(p.Lx, 2) + 1
+    ky_max_idx = fld(p.Ly, 2) + 1
+    ky_indices = collect(1:ky_max_idx)
+
+    kx_val = 2π * (kx_idx - 1) / p.Lx
+    if kx_val > π
+        kx_val -= 2π
+    end
+
+    ky_vals = Vector{Float64}(undef, length(ky_indices))
+    @inbounds for (i, ky_idx) in enumerate(ky_indices)
+        ky_vals[i] = 2π * (ky_idx - 1) / p.Ly
+        if ky_vals[i] > π
+            ky_vals[i] -= 2π
+        end
+    end
+
+    return kx_idx, ky_indices, kx_val, ky_vals
+end
+
+"""
 SpectrumResult
 用于存储 JLD2 的重型数据
 """
@@ -305,19 +349,31 @@ struct SpectrumResult
     # 动量解析的谱权重 (可选，数据量巨大，通常只存特定路径或求和)
     # 我们这里存: A(k, ω=0) (Fermi Surface) 和 DOS.
     A_k_ω0::Matrix{Float64} # 费米面谱权重
+    A_kpath::Matrix{Float64} # (π,0) -> (π,π) 路径上的 A(k, ω)
 end
 
 # ------------------------------------------------
 # 3. 核心测量函数
 # ------------------------------------------------
 
-function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
+function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
     N = p.N
+    Lx = p.Lx
+    Ly = p.Ly
     dim = 2 * N
     β = p.β
     U = cache.U
     E = cache.E_n
     f = cache.fermi_factors # already updated in standard measure
+    ω_grid = cache.omega_grid
+    σ_ω = cache.sigma_omega
+    dos_ω_grid = cache.dos_omega_grid
+    dos_vals = cache.dos_vals
+    dos_AN_vals = cache.dos_AN_vals
+    ak_map = cache.ak_map
+    ak_path = cache.ak_path
+    lor_cache = cache.lor_cache
+    kpath_weights = cache.kpath_weights
     
     # ------------------------------------------------
     # A. 计算电流矩阵元 J_mn = <n|Jx|m>
@@ -393,8 +449,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
     # DC: ω -> 0 limit.
     
     # Grid
-    ω_grid = collect(p.ω_min : p.Δω : p.ω_max)
-    σ_ω = zeros(Float64, length(ω_grid))
+    fill!(σ_ω, 0.0)
     dc_cond = 0.0
     
     # Pre-calculate delta function broadening
@@ -425,17 +480,18 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
     σ_ω .*= (π / N)
     
     # ------------------------------------------------
-    # D. 态密度 (DOS) & 谱函数 A(k, 0)
+    # D. 态密度 (DOS) & 谱函数
     # ------------------------------------------------
     # DOS 网格：从 -ω_max 到 +ω_max (或者稍微大一点，覆盖整个能带)
     # 我们这里使用对称的区间
-    dos_ω_grid = collect(-p.ω_max : p.Δω : p.ω_max)
-    dos_vals = zeros(Float64, length(dos_ω_grid))
-    dos_AN_vals = zeros(Float64, length(dos_ω_grid))
-    
-    # A(k, w=0) map
-    # A(k, 0) ~ sum_n |u_n(k)|^2 delta(0 - En)
-    ak_map = zeros(Float64, p.Lx, p.Ly)
+    fill!(dos_vals, 0.0)
+    fill!(dos_AN_vals, 0.0)
+    fill!(ak_map, 0.0)
+
+    # A(k, ω) along (π,0) -> (π,π)
+    _, ky_indices, _, _ = antinode_kpath(p)
+    n_kpath = length(ky_indices)
+    fill!(ak_path, 0.0)
     
     for n in 1:dim
         En = E[n]
@@ -445,24 +501,16 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
         @simd for i in 1:N
             w_n += abs2(U[i, n])
         end
-        
-        # 2. Add to DOS
-        # We need to cover negative energies too? Usually DOS is symmetric or plotted full.
-        # Let's just plot for w in ω_grid (positive).
-        # Check symmetry: E_n and -E_n.
-        for (iw, w) in enumerate(dos_ω_grid)
-            dos_vals[iw] += w_n * lorentzian(w - En, p.η)
-        end
 
-        # 3. DOS at Antinodal Point
+        # 2. DOS at Antinodal Point
         # AN point in 2D square lattice: (π, 0) or (0, π)
         # sum_{x,y} u(x,y) * (-1)^x  and  sum_{x,y} u(x,y) * (-1)^y
         sum_pi_0 = ComplexF64(0.0) # k=(pi, 0)
         sum_0_pi = ComplexF64(0.0) # k=(0, pi)
         @inbounds for i in 1:N
             # 将 i 转换为 (x, y) 坐标，1-based
-            x = mod1(i, p.Lx)
-            y = cld(i, p.Lx)
+            x = mod1(i, Lx)
+            y = cld(i, Lx)
             val = U[i, n]
             # (-1)^x
             if iseven(x)
@@ -482,23 +530,55 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
         # 注意归一化系数 1/sqrt(N) 平方后为 1/N
         weight_AN = 0.5 * (abs2(sum_pi_0) + abs2(sum_0_pi)) / N
 
-        # 累加到 dos_AN (使用相同的 Lorentzian 展宽)
-        for (iw, w) in enumerate(dos_ω_grid)
-            dos_AN_vals[iw] += weight_AN * lorentzian(w - En, p.η)
+        # 3. Cache Lorentzian values for this eigenstate
+        @inbounds for iw in eachindex(dos_ω_grid)
+            lor_cache[iw] = lorentzian(dos_ω_grid[iw] - En, p.η)
+        end
+
+        # 4. Add to DOS and DOS_AN
+        @inbounds for iw in eachindex(dos_ω_grid)
+            lor_val = lor_cache[iw]
+            dos_vals[iw] += w_n * lor_val
+            dos_AN_vals[iw] += weight_AN * lor_val
+        end
+
+        # 5. A(k, ω) along kx = π path (1D FFT along y)
+        @inbounds for y in 1:Ly
+            acc = zero(ComplexF64)
+            base = (y - 1) * Lx
+            @simd for x in 1:Lx
+                i = base + x
+                val = U[i, n]
+                if iseven(x)
+                    acc += val
+                else
+                    acc -= val
+                end
+            end
+            cache.u_pi_cache[y] = acc
+        end
+        mul!(cache.u_pi_k_cache, cache.fft_plan_y, cache.u_pi_cache)
+        @inbounds for (idx, ky_idx) in enumerate(ky_indices)
+            kpath_weights[idx] = abs2(cache.u_pi_k_cache[ky_idx]) / N
+        end
+        @inbounds for iw in eachindex(dos_ω_grid)
+            lor_val = lor_cache[iw]
+            @simd for k in 1:n_kpath
+                ak_path[k, iw] += kpath_weights[k] * lor_val
+            end
         end
         
-        
-        # 4. Spectral Function A(k, 0) (Fermi Surface intensity)
+        # 6. Spectral Function A(k, 0) (Fermi Surface intensity)
         # Check if En is close to 0 (within η)
-        weight_at_zero = lorentzian(0.0 - En, p.η)
+        weight_at_zero = lorentzian(-En, p.η)
         
         if weight_at_zero > 1e-6
             # Perform FFT for this eigenstate
             # Copy u_{i,n} to buffer
             for i in 1:N
                 # Map 1D i to 2D (x,y)
-                x = mod1(i, p.Lx)
-                y = cld(i, p.Lx)
+                x = mod1(i, Lx)
+                y = cld(i, Lx)
                 cache.u_r_cache[x, y] = U[i, n]
             end
             
@@ -508,7 +588,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
             mul!(cache.u_k_cache, cache.fft_plan, cache.u_r_cache)
             
             # Add to map: |u_k|^2 * delta(E)
-            for y in 1:p.Ly, x in 1:p.Lx
+            for y in 1:Ly, x in 1:Lx
                 ak_map[x, y] += abs2(cache.u_k_cache[x, y]) * weight_at_zero
             end
         end
@@ -518,9 +598,16 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters)
     ak_map ./= N # Normalization of FFT
     # FFTW definition: backward fft (default) is unnormalized sum. 
     # 1/sqrt(N) factor in definition means |FFT|^2 / N.
-    
+
+    if reuse_buffers
+        return SpectrumResult(superfluid_stiffness, dc_cond, 
+                              ω_grid, σ_ω, 
+                              dos_ω_grid, dos_vals, dos_AN_vals, 
+                              ak_map, ak_path)
+    end
+
     return SpectrumResult(superfluid_stiffness, dc_cond, 
-                          ω_grid, σ_ω, 
-                          dos_ω_grid, dos_vals, dos_AN_vals, 
-                          ak_map)
+                          copy(ω_grid), copy(σ_ω), 
+                          copy(dos_ω_grid), copy(dos_vals), copy(dos_AN_vals), 
+                          copy(ak_map), copy(ak_path))
 end

@@ -50,6 +50,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     obs_csv_path = joinpath(out_dir, "observables.csv")
     trans_csv_path = joinpath(out_dir, "transport.csv") # 存标量输运结果
     spectra_jld_path = joinpath(out_dir, "spectra_bins.jld2") # 存谱学数组
+    pair_scatter_jld_path = joinpath(out_dir, "pairing_scatter.jld2") # 局域配对散点
     
     f_log = open(log_path, "a")
     f_obs = open(obs_csv_path, "w")
@@ -68,7 +69,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     
     # 写入 CSV 表头
     # 基础物理量
-    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair")
+    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair,D2,D4,Sum_d2,Sum_d4")
     # 输运标量
     println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
     
@@ -86,7 +87,17 @@ function run_simulation(p::ModelParameters, out_dir::String;
     diagonalize_H_BdG!(cache, p)
     
     # 初始化 JLD2 文件 (写入参数信息)
-    jldsave(spectra_jld_path; params=p, omega_grid=collect(p.ω_min:p.Δω:p.ω_max))
+    omega_grid = cache.omega_grid
+    dos_omega_grid = cache.dos_omega_grid
+    kx_idx, ky_indices, kx_val, ky_vals = antinode_kpath(p)
+    jldsave(spectra_jld_path; params=p,
+            omega_grid=omega_grid,
+            dos_omega_grid=dos_omega_grid,
+            kpath_kx=kx_val,
+            kpath_ky=ky_vals,
+            kpath_kx_idx=kx_idx,
+            kpath_ky_idx=ky_indices)
+    jldsave(pair_scatter_jld_path; params=p)
 
     # --- 3. 热化阶段 (Adaptive Thermalization) ---
     Nt_current = Nt_therm_init
@@ -147,6 +158,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_dos = Vector{Float64}()
     accum_dos_AN = Vector{Float64}()
     accum_Ak0 = Matrix{Float64}(undef, 0, 0)
+    accum_Akpath = Matrix{Float64}(undef, 0, 0)
     
     for i in 1:n_measure
         # 1. HMC 演化
@@ -158,17 +170,24 @@ function run_simulation(p::ModelParameters, out_dir::String;
         
         # 写入 Observables CSV
         # Sweep, Accepted, dH, ...
-        line = @sprintf("%d,%d,%.5e,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", 
+        line = @sprintf("%d,%d,%.5e,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", 
                 i, acc, dH, obs.total_energy, 
                 obs.Δ_amp, obs.Δ_local, obs.Δ_global, obs.S_Δ, obs.hole_conc,
-                obs.Δ_diff, obs.Δ_pair, obs.Δ_localpair)
+                obs.Δ_diff, obs.Δ_pair, obs.Δ_localpair,
+                obs.D2, obs.D4, obs.d2_sum, obs.d4_sum)
         write(f_obs, line)
         flush(f_obs) # 实时落盘
+
+        jldopen(pair_scatter_jld_path, "a+") do file
+            group_name = "sweep_$i"
+            g = JLD2.Group(file, group_name)
+            g["d_local"] = obs.d_local
+        end
         
         # 3. 重量级测量 (Every Freq Step)
         if i % measure_transport_freq == 0
             # 计算输运和谱
-            spec_res = measure_transport_and_spectra(cache, p)
+            spec_res = measure_transport_and_spectra(cache, p; reuse_buffers=true)
             
             # A. 写入 Transport CSV (Scalars)
             line_trans = @sprintf("%d,%.6f,%.6f\n", 
@@ -183,12 +202,14 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_dos = copy(spec_res.dos)
                 accum_dos_AN = copy(spec_res.dos_AN)
                 accum_Ak0 = copy(spec_res.A_k_ω0)
+                accum_Akpath = copy(spec_res.A_kpath)
                 bin_count = 1
             else
                 accum_opt_cond .+= spec_res.optical_conductivity
                 accum_dos .+= spec_res.dos
                 accum_dos_AN .+= spec_res.dos_AN
                 accum_Ak0 .+= spec_res.A_k_ω0
+                accum_Akpath .+= spec_res.A_kpath
                 bin_count += 1
             end
             
@@ -199,6 +220,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_dos ./= bin_count
                 accum_dos_AN ./= bin_count
                 accum_Ak0 ./= bin_count
+                accum_Akpath ./= bin_count
                 
                 # JLD2 追加写入
                 # 使用 string key 来区分不同的 bin，例如 "bin_100", "bin_200" 表示到第几步的 bin
@@ -210,6 +232,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     g["dos"] = accum_dos
                     g["dos_AN"] = accum_dos_AN
                     g["A_k0"] = accum_Ak0
+                    g["A_kpath"] = accum_Akpath
                     g["count"] = bin_count # 记录这个 bin 包含了多少个样本
                 end
                 

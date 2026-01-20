@@ -163,6 +163,9 @@ mutable struct ComputeCache
     # 缓存预计算费米分布
     fermi_factors::Vector{Float64} 
 
+    # 局域 d-wave 配对算符缓存 (长度 N)
+    d_local_cache::Vector{ComplexF64}
+
     # 缓存用于 HMC 拒绝时的备份
     Δ_backup::Matrix{ComplexF64}
     E_n_backup::Vector{Float64}
@@ -177,6 +180,22 @@ mutable struct ComputeCache
     u_r_cache::Matrix{ComplexF64} # 用于存储 fft 前的波函数 (Lx x Ly)
     u_k_cache::Matrix{ComplexF64} # 用于存储 fft 后的波函数 (Lx x Ly)
     fft_plan::FFTW.cFFTWPlan      # 预计算的 FFT 计划
+
+    # kx=π 路径的一维 FFT 缓存 (沿 y 方向)
+    u_pi_cache::Vector{ComplexF64}
+    u_pi_k_cache::Vector{ComplexF64}
+    fft_plan_y::FFTW.cFFTWPlan
+
+    # 光谱测量缓存
+    omega_grid::Vector{Float64}
+    sigma_omega::Vector{Float64}
+    dos_omega_grid::Vector{Float64}
+    dos_vals::Vector{Float64}
+    dos_AN_vals::Vector{Float64}
+    ak_map::Matrix{Float64}
+    ak_path::Matrix{Float64}
+    lor_cache::Vector{Float64}
+    kpath_weights::Vector{Float64}
 end
 
 function initialize_cache(p::ModelParameters)
@@ -189,6 +208,7 @@ function initialize_cache(p::ModelParameters)
     U = zeros(ComplexF64, dim, dim)
     forces = zeros(ComplexF64, p.N, 2)
     fermi_factors = zeros(Float64, dim)
+    d_local_cache = zeros(ComplexF64, p.N)
     Δ_backup = zeros(ComplexF64, p.N, 2)
     E_n_backup = zeros(Float64, dim)
     U_backup = zeros(ComplexF64, dim, dim)
@@ -204,9 +224,28 @@ function initialize_cache(p::ModelParameters)
     u_r_cache = zeros(ComplexF64, p.Lx, p.Ly)
     u_k_cache = zeros(ComplexF64, p.Lx, p.Ly)
     fft_plan = plan_fft(u_k_cache) # 预规划
-    
+
+    u_pi_cache = zeros(ComplexF64, p.Ly)
+    u_pi_k_cache = zeros(ComplexF64, p.Ly)
+    fft_plan_y = plan_fft(u_pi_k_cache)
+
+    omega_grid = collect(p.ω_min:p.Δω:p.ω_max)
+    sigma_omega = zeros(Float64, length(omega_grid))
+    dos_omega_grid = collect(-p.ω_max:p.Δω:p.ω_max)
+    dos_vals = zeros(Float64, length(dos_omega_grid))
+    dos_AN_vals = zeros(Float64, length(dos_omega_grid))
+    ak_map = zeros(Float64, p.Lx, p.Ly)
+    ky_max_idx = fld(p.Ly, 2) + 1
+    ak_path = zeros(Float64, ky_max_idx, length(dos_omega_grid))
+    lor_cache = zeros(Float64, length(dos_omega_grid))
+    kpath_weights = zeros(Float64, ky_max_idx)
+
     return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, 
-                        Δ_backup, E_n_backup, U_backup,
+                        d_local_cache, Δ_backup, E_n_backup, U_backup,
                         Jx_sparse, J_mn, temp_JU,
-                        u_r_cache, u_k_cache, fft_plan)
+                        u_r_cache, u_k_cache, fft_plan,
+                        u_pi_cache, u_pi_k_cache, fft_plan_y,
+                        omega_grid, sigma_omega, dos_omega_grid,
+                        dos_vals, dos_AN_vals, ak_map, ak_path,
+                        lor_cache, kpath_weights)
 end
