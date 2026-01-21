@@ -11,3 +11,5 @@ plots/figures/*
 
 .vscode/
 .DS_Store
+
+projectHPC/example/T_*
