@@ -170,7 +170,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
         
         # 写入 Observables CSV
         # Sweep, Accepted, dH, ...
-        line = @sprintf("%d,%d,%.5e,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", 
+        line = @sprintf("%d,%d,%.5e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n", 
                 i, acc, dH, obs.total_energy, 
                 obs.Δ_amp, obs.Δ_local, obs.Δ_global, obs.S_Δ, obs.hole_conc,
                 obs.Δ_diff, obs.Δ_pair, obs.Δ_localpair,
@@ -190,7 +190,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
             spec_res = measure_transport_and_spectra(cache, p; reuse_buffers=true)
             
             # A. 写入 Transport CSV (Scalars)
-            line_trans = @sprintf("%d,%.6f,%.6f\n", 
+            line_trans = @sprintf("%d,%.6e,%.6e\n", 
                                   i, spec_res.superfluid_stiffness, spec_res.dc_conductivity)
             write(f_trans, line_trans)
             flush(f_trans)
