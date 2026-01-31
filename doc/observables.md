@@ -152,6 +152,6 @@ $$
 B_{\text{global}}=1-\frac{\overline{|\braket{D}|^4}}{2\,\left(\overline{|\braket{D}|^2}\right)^2}
 $$
 $$
-B_{\text{local}} = 1-\frac{\overline{\sum_{i=1}^N \left| \braket{d_i} \right|^4}}{2 \left( \overline{\sum_{i=1}^N \left| \braket{d_i} \right|^2} \right)^2}
+B_{\text{local}} = 1-\frac{\overline{\frac1N\sum_{i=1}^N \left| \braket{d_i} \right|^4}}{2 \left( \overline{\frac1N\sum_{i=1}^N \left| \braket{d_i} \right|^2} \right)^2}
 $$
 有配对时 $B=0.5$；无配对时 $B=0$.
