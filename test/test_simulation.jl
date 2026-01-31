@@ -2,7 +2,7 @@ using DwaveHMC
 
 # 模型参数
 Lx, Ly = 12, 12
-t, tp, μ = 1.0, -0.35, -1.08
+t, tp, μ = 1.0, -0.35, -1.4
 W, n_imp = 1.0, 0.0
 T, J = 0.001, 0.8
 β = 1.0 / T
@@ -19,7 +19,7 @@ Nt_therm_init = 20
 Nt_measure = 6
 measure_transport_freq = 1
 bin_size = 5
-out_dir = "data/test_stiffness_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)_T$(T)_mu$(μ)"
+out_dir = "data/test_GC_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)_T$(T)_mu$(μ)"
 
 # 运行模拟
 run_simulation(p, out_dir; 

@@ -86,6 +86,82 @@ function update_H_BdG!(cache::ComputeCache, p::ModelParameters, state::Simulatio
 end
 
 """
+    ensure_eigen_workspace!(cache::ComputeCache)
+
+按当前矩阵规模初始化/扩展 LAPACK ZHEEVD 的工作空间。
+"""
+function ensure_eigen_workspace!(cache::ComputeCache)
+    if !isempty(cache.eig_work)
+        return nothing
+    end
+
+    A = cache.U
+    n = size(A, 1)
+    lda = stride(A, 2)
+
+    jobz = 'V'
+    uplo = 'U'
+    n_blas = LinearAlgebra.BlasInt(n)
+    lda_blas = LinearAlgebra.BlasInt(lda)
+
+    # workspace query
+    work = Vector{ComplexF64}(undef, 1)
+    rwork = Vector{Float64}(undef, 1)
+    iwork = Vector{LinearAlgebra.BlasInt}(undef, 1)
+    lwork = LinearAlgebra.BlasInt(-1)
+    lrwork = LinearAlgebra.BlasInt(-1)
+    liwork = LinearAlgebra.BlasInt(-1)
+    info = Ref{LinearAlgebra.BlasInt}()
+
+    ccall((LinearAlgebra.LAPACK.@blasfunc(zheevd_), LinearAlgebra.LAPACK.liblapack), Cvoid,
+          (Ref{UInt8}, Ref{UInt8}, Ref{LinearAlgebra.BlasInt}, Ptr{ComplexF64}, Ref{LinearAlgebra.BlasInt},
+           Ptr{Float64}, Ptr{ComplexF64}, Ref{LinearAlgebra.BlasInt}, Ptr{Float64}, Ref{LinearAlgebra.BlasInt},
+           Ptr{LinearAlgebra.BlasInt}, Ref{LinearAlgebra.BlasInt}, Ref{LinearAlgebra.BlasInt}, Clong, Clong),
+          jobz, uplo, n_blas, A, lda_blas,
+          cache.E_n, work, lwork, rwork, lrwork, iwork, liwork, info, 1, 1)
+
+    LinearAlgebra.LAPACK.chklapackerror(info[])
+
+    lwork = LinearAlgebra.BlasInt(real(work[1]))
+    lrwork = LinearAlgebra.BlasInt(rwork[1])
+    liwork = iwork[1]
+
+    resize!(cache.eig_work, lwork)
+    resize!(cache.eig_rwork, lrwork)
+    resize!(cache.eig_iwork, liwork)
+
+    return nothing
+end
+
+"""
+    heevd_inplace!(A, W, work, rwork, iwork)
+
+调用 LAPACK ZHEEVD 计算 Hermitian 矩阵本征值/向量，结果写入 A 和 W。
+"""
+function heevd_inplace!(A::StridedMatrix{ComplexF64},
+                        W::Vector{Float64},
+                        work::Vector{ComplexF64},
+                        rwork::Vector{Float64},
+    iwork::Vector{LinearAlgebra.BlasInt})
+    n = size(A, 1)
+    lda = stride(A, 2)
+    jobz = 'V'
+    uplo = 'U'
+    info = Ref{LinearAlgebra.BlasInt}()
+
+    ccall((LinearAlgebra.LAPACK.@blasfunc(zheevd_), LinearAlgebra.LAPACK.liblapack), Cvoid,
+          (Ref{UInt8}, Ref{UInt8}, Ref{LinearAlgebra.BlasInt}, Ptr{ComplexF64}, Ref{LinearAlgebra.BlasInt},
+           Ptr{Float64}, Ptr{ComplexF64}, Ref{LinearAlgebra.BlasInt}, Ptr{Float64}, Ref{LinearAlgebra.BlasInt},
+           Ptr{LinearAlgebra.BlasInt}, Ref{LinearAlgebra.BlasInt}, Ref{LinearAlgebra.BlasInt}, Clong, Clong),
+          jobz, uplo, LinearAlgebra.BlasInt(n), A, LinearAlgebra.BlasInt(lda),
+          W, work, LinearAlgebra.BlasInt(length(work)), rwork, LinearAlgebra.BlasInt(length(rwork)),
+          iwork, LinearAlgebra.BlasInt(length(iwork)), info, 1, 1)
+
+    LinearAlgebra.LAPACK.chklapackerror(info[])
+    return nothing
+end
+
+"""
     diagonalize_H_BdG!(cache::ComputeCache, p::ModelParameters)
 
 对角化 H_BdG 并计算 HMC 能量。
@@ -94,21 +170,16 @@ H_HMC = ... - sum(log(2*cosh(beta*E/2))) ...
 注意：这里只计算费米子行列式部分的贡献，玻色子项(动能+势能)在外部计算。
 """
 function diagonalize_H_BdG!(cache::ComputeCache, p::ModelParameters)
-    # 1. 保护原始哈密顿量
-    # 因为 eigen! 会破坏输入矩阵，而我们的 cache.H_base 包含着下一时间步需要的静态项(动能等)。
+    # 1. 初始化 LAPACK workspace（只做一次）
+    ensure_eigen_workspace!(cache)
+
+    # 2. 保护原始哈密顿量
+    # 因为 LAPACK 会破坏输入矩阵，而 cache.H_base 还需要用于下一步更新，
     # 所以必须先将 H_base 拷贝到工作空间 U 中。
     copyto!(cache.U, cache.H_base)
-    
-    # 2. 对角化
-    # 我们对 U 进行 Hermitian 封装，eigen! 会利用对称性加速。
-    # 注意：eigen! 会返回新的 vals 和 vecs 数组 (这里会有一次内存分配)，
-    # 但为了代码的稳健性，这是值得的。
-    vals, vecs = eigen!(Hermitian(cache.U, :U))
-    
-    # 3. 将结果存回 Cache
-    # vals 是实数，vecs 是复数矩阵
-    copyto!(cache.E_n, vals)
-    copyto!(cache.U, vecs)
+
+    # 3. 对角化（原位写入 cache.U / cache.E_n）
+    heevd_inplace!(cache.U, cache.E_n, cache.eig_work, cache.eig_rwork, cache.eig_iwork)
     
     return nothing
 end

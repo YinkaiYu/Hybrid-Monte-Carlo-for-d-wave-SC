@@ -197,6 +197,11 @@ mutable struct ComputeCache
     ak_path::Matrix{Float64}
     lor_cache::Vector{Float64}
     kpath_weights::Vector{Float64}
+
+    # LAPACK eigen workspace (reuse to reduce allocations)
+    eig_work::Vector{ComplexF64}
+    eig_rwork::Vector{Float64}
+    eig_iwork::Vector{LinearAlgebra.BlasInt}
 end
 
 function initialize_cache(p::ModelParameters)
@@ -241,6 +246,9 @@ function initialize_cache(p::ModelParameters)
     ak_path = zeros(Float64, ky_max_idx, length(dos_omega_grid))
     lor_cache = zeros(Float64, length(dos_omega_grid))
     kpath_weights = zeros(Float64, ky_max_idx)
+    eig_work = ComplexF64[]
+    eig_rwork = Float64[]
+    eig_iwork = LinearAlgebra.BlasInt[]
 
     return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, 
                         d_local_cache, Δ_backup, E_n_backup, U_backup,
@@ -249,5 +257,6 @@ function initialize_cache(p::ModelParameters)
                         u_pi_cache, u_pi_k_cache, fft_plan_y,
                         omega_grid, sigma_omega, dos_omega_grid,
                         dos_vals, dos_AN_vals, ak_map, ak_path,
-                        lor_cache, kpath_weights)
+                        lor_cache, kpath_weights,
+                        eig_work, eig_rwork, eig_iwork)
 end
