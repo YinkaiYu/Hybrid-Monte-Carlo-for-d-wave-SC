@@ -255,7 +255,8 @@ Jx(q) = i * sum ( t * c^dag_i c_{i+x} + t' * ... - h.c. ) * exp(i q·r_i)
 """
 function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Float64=0.0, qy::Float64=0.0, store::Symbol=:q0)
     N = p.N
-    Lx = p.Lx
+    x_idx = cache.x_idx
+    y_idx = cache.y_idx
     # 使用 Triplet 格式构建稀疏矩阵 (I, J, V)
     I_idx = Int[]
     J_idx = Int[]
@@ -268,11 +269,9 @@ function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Fl
     end
     
     # 遍历所有格点构建 Particle block (N x N)
-    for i in 1:N
+    @inbounds for i in 1:N
         # 将 i 转换为 (x, y) 坐标，1-based
-        x = mod1(i, Lx)
-        y = cld(i, Lx)
-        phase = cis(qx * (x - 1) + qy * (y - 1))
+        phase = cis(qx * (x_idx[i] - 1) + qy * (y_idx[i] - 1))
 
         # +x neighbor (Nearest Neighbor)
         j_x = p.nn_table[i, 1] 
@@ -389,6 +388,11 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     ak_path = cache.ak_path
     lor_cache = cache.lor_cache
     kpath_weights = cache.kpath_weights
+    x_idx = cache.x_idx
+    y_idx = cache.y_idx
+    parity_x = cache.parity_x
+    parity_y = cache.parity_y
+    omega_inv = cache.omega_inv
     
     # ------------------------------------------------
     # A. 计算电流矩阵元 J_mn(q) = <n|Jx(q)|m> (用于超流刚度)
@@ -498,8 +502,8 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
             # 2. Optical Conductivity
             fn_fm = f[n] - f[m]
             if abs(fn_fm) < 1e-12 continue end
-            for (iω, ω) in enumerate(ω_grid)
-                σ_ω[iω] += (fn_fm / ω) * J2 * lorentzian(ω - Em_En, p.η)
+            @inbounds for (iω, ω) in enumerate(ω_grid)
+                σ_ω[iω] += (fn_fm * omega_inv[iω]) * J2 * lorentzian(ω - Em_En, p.η)
             end
         end
     end
@@ -521,7 +525,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     n_kpath = length(ky_indices)
     fill!(ak_path, 0.0)
     
-    for n in 1:dim
+    @inbounds for n in 1:dim
         En = E[n]
         # 1. Calculate weight W_n = sum_i |u_{i,n}|^2
         # u is top half of U
@@ -536,22 +540,9 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
         sum_pi_0 = ComplexF64(0.0) # k=(pi, 0)
         sum_0_pi = ComplexF64(0.0) # k=(0, pi)
         @inbounds for i in 1:N
-            # 将 i 转换为 (x, y) 坐标，1-based
-            x = mod1(i, Lx)
-            y = cld(i, Lx)
             val = U[i, n]
-            # (-1)^x
-            if iseven(x)
-                sum_pi_0 += val
-            else
-                sum_pi_0 -= val
-            end
-            # (-1)^y
-            if iseven(y)
-                sum_0_pi += val
-            else
-                sum_0_pi -= val
-            end
+            sum_pi_0 += parity_x[x_idx[i]] * val
+            sum_0_pi += parity_y[y_idx[i]] * val
         end
 
         # 计算谱权重 |u_k|^2
@@ -577,11 +568,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
             @simd for x in 1:Lx
                 i = base + x
                 val = U[i, n]
-                if iseven(x)
-                    acc += val
-                else
-                    acc -= val
-                end
+                acc += parity_x[x] * val
             end
             cache.u_pi_cache[y] = acc
         end
@@ -603,11 +590,9 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
         if weight_at_zero > 1e-6
             # Perform FFT for this eigenstate
             # Copy u_{i,n} to buffer
-            for i in 1:N
+            @inbounds for i in 1:N
                 # Map 1D i to 2D (x,y)
-                x = mod1(i, Lx)
-                y = cld(i, Lx)
-                cache.u_r_cache[x, y] = U[i, n]
+                cache.u_r_cache[x_idx[i], y_idx[i]] = U[i, n]
             end
             
             # 执行 In-place FFT

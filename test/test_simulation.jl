@@ -19,7 +19,7 @@ Nt_therm_init = 20
 Nt_measure = 6
 measure_transport_freq = 1
 bin_size = 5
-out_dir = "data/test_GC_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)_T$(T)_mu$(μ)"
+out_dir = "data/test_for_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)_T$(T)_mu$(μ)"
 
 # 运行模拟
 run_simulation(p, out_dir; 

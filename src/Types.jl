@@ -182,6 +182,12 @@ mutable struct ComputeCache
     u_k_cache::Matrix{ComplexF64} # 用于存储 fft 后的波函数 (Lx x Ly)
     fft_plan::FFTW.cFFTWPlan      # 预计算的 FFT 计划
 
+    # 站点坐标与奇偶性缓存
+    x_idx::Vector{Int}
+    y_idx::Vector{Int}
+    parity_x::Vector{Int8}  # (-1)^x
+    parity_y::Vector{Int8}  # (-1)^y
+
     # kx=π 路径的一维 FFT 缓存 (沿 y 方向)
     u_pi_cache::Vector{ComplexF64}
     u_pi_k_cache::Vector{ComplexF64}
@@ -197,6 +203,7 @@ mutable struct ComputeCache
     ak_path::Matrix{Float64}
     lor_cache::Vector{Float64}
     kpath_weights::Vector{Float64}
+    omega_inv::Vector{Float64}
 
     # LAPACK eigen workspace (reuse to reduce allocations)
     eig_work::Vector{ComplexF64}
@@ -232,6 +239,23 @@ function initialize_cache(p::ModelParameters)
     u_k_cache = zeros(ComplexF64, p.Lx, p.Ly)
     fft_plan = plan_fft(u_k_cache) # 预规划
 
+    x_idx = Vector{Int}(undef, p.N)
+    y_idx = Vector{Int}(undef, p.N)
+    parity_x = Vector{Int8}(undef, p.Lx)
+    parity_y = Vector{Int8}(undef, p.Ly)
+    @inbounds for x in 1:p.Lx
+        parity_x[x] = iseven(x) ? Int8(1) : Int8(-1)
+    end
+    @inbounds for y in 1:p.Ly
+        parity_y[y] = iseven(y) ? Int8(1) : Int8(-1)
+    end
+    @inbounds for i in 1:p.N
+        x = mod1(i, p.Lx)
+        y = cld(i, p.Lx)
+        x_idx[i] = x
+        y_idx[i] = y
+    end
+
     u_pi_cache = zeros(ComplexF64, p.Ly)
     u_pi_k_cache = zeros(ComplexF64, p.Ly)
     fft_plan_y = plan_fft(u_pi_k_cache)
@@ -246,6 +270,7 @@ function initialize_cache(p::ModelParameters)
     ak_path = zeros(Float64, ky_max_idx, length(dos_omega_grid))
     lor_cache = zeros(Float64, length(dos_omega_grid))
     kpath_weights = zeros(Float64, ky_max_idx)
+    omega_inv = 1.0 ./ omega_grid
     eig_work = ComplexF64[]
     eig_rwork = Float64[]
     eig_iwork = LinearAlgebra.BlasInt[]
@@ -254,9 +279,10 @@ function initialize_cache(p::ModelParameters)
                         d_local_cache, Δ_backup, E_n_backup, U_backup,
                         Jx_sparse_q0, Jx_sparse_qy, J_mn, temp_JU,
                         u_r_cache, u_k_cache, fft_plan,
+                        x_idx, y_idx, parity_x, parity_y,
                         u_pi_cache, u_pi_k_cache, fft_plan_y,
                         omega_grid, sigma_omega, dos_omega_grid,
                         dos_vals, dos_AN_vals, ak_map, ak_path,
-                        lor_cache, kpath_weights,
+                        lor_cache, kpath_weights, omega_inv,
                         eig_work, eig_rwork, eig_iwork)
 end
