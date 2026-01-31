@@ -73,26 +73,28 @@ $$\braket{c_{i,\uparrow}^\dagger c_{j,\uparrow}}+\braket{c_{i,\downarrow}^\dagge
 
 定义超流刚度：
 $$
-\rho_s=\braket{-K_x}-\Lambda_{xx}
+\rho_s=\braket{-K_x}-\Lambda_{xx}(q_x=0,q_y\to0,\omega=0)
 $$
 其中抗磁项：
 $$\braket{-K_x}=\frac1N\sum_{i,\sigma}\left[\,t\braket{c_{i,\sigma}^\dagger c_{i+\hat{x},\sigma}}\,+\,t'\braket{c_{i,\sigma}^\dagger c_{i+\hat{x}+\hat{y},\sigma}}\,+\,t'\braket{c_{i,\sigma}^\dagger c_{i+\hat{x}-\hat{y},\sigma}}\,+\text{h.c.}\,\right]$$
-顺磁项：
-$$\Lambda_{xx} = \frac{1}{N} \sum_{n=1}^{2N} \sum_{m=1}^{2N} \frac{f(E_n) - f(E_m)}{E_m - E_n} |J^x_{nm}|^2$$
-$$J^x_{nm}=\bra{n}J^x\ket{m}\,,\quad J^x=\text{i}\,\sum_{i,\sigma}\left[\,t\,c_{i,\sigma}^\dagger c_{i+\hat{x},\sigma}\,+\,t'\,c_{i,\sigma}^\dagger c_{i+\hat{x}+\hat{y},\sigma}\,+\,t'\,c_{i,\sigma}^\dagger c_{i+\hat{x}-\hat{y},\sigma}\,-\text{h.c.}\,\right]$$
+流流关联（顺磁项）：
+$$\Lambda_{xx}(q,\omega=0) = \frac{1}{N} \sum_{n\ne m}^{2N} \frac{f(E_n) - f(E_m)}{E_m - E_n} |J^x_{nm}(q)|^2$$
+$$J^x_{nm}(q)=\bra{n}J^x(q)\ket{m}\,,\quad J^x(q)=\text{i}\,\sum_{i,\sigma}\left[\,t\,c_{i,\sigma}^\dagger c_{i+\hat{x},\sigma}\,+\,t'\,c_{i,\sigma}^\dagger c_{i+\hat{x}+\hat{y},\sigma}\,+\,t'\,c_{i,\sigma}^\dagger c_{i+\hat{x}-\hat{y},\sigma}\,-\text{h.c.}\,\right] \text{e}^{\text{i} q \cdot r_i}$$
+数值上，在计算超流刚度顺磁项时，取 $q_x=0, q_y=\frac{2\pi}{L_y}$ .
+
 在具体的程序计算中，抗磁项可以直接显示手写循环来算。而顺磁项需要定义稀疏矩阵用 `BLAS` 来做稀疏矩阵乘法。此外，当 $E_m\approx E_n$ 时还需注意数值稳定性： 
 $$ \lim_{E_m \to E_n} \frac{f(E_n) - f(E_m)}{E_m - E_n} = -f'(E_n) =\beta f(E_n) [1 - f(E_n)]$$
 
 ### 光电导与直流电导
 
 流流关联
-$$\Lambda_{xx}(q=0,\omega) = \frac{1}{N} \sum_{n=1}^{2N} \sum_{m=1}^{2N} \frac{f(E_n) - f(E_m)}{E_m - E_n-\omega-\text{i}\eta} |J^x_{nm}|^2$$
+$$\Lambda_{xx}(q=0,\omega) = \frac{1}{N} \sum_{n\ne m}^{2N} \frac{f(E_n) - f(E_m)}{E_m - E_n-\omega-\text{i}\eta} |J^x_{nm}(0)|^2$$
 根据 $\frac{1}{x - i\eta} = P(\frac{1}{x}) + i\pi\delta(x)$ 得 
-$$ \text{Im } \Lambda_{xx}(\omega) = \pi \frac{1}{N} \sum_{n=1}^{2N} \sum_{m=1}^{2N} (f(E_n) - f(E_m)) |J^x_{nm}|^2 \delta(E_m - E_n - \omega) $$
+$$ \text{Im } \Lambda_{xx}(\omega) = \pi \frac{1}{N} \sum_{n\ne m}^{2N} (f(E_n) - f(E_m)) |J^x_{nm}(0)|^2 \delta(E_m - E_n - \omega) $$
 光电导定义为 $\text{Re}\,\sigma_{xx}(\omega)=\frac{1}{\text{i}\omega}\Lambda_{xx}(q=0,\omega)=\frac{1}{\omega}\text{Im}\,\Lambda_{xx}(q=0,\omega)$，也即：
-$$ \text{Re}\,\sigma_{xx}(\omega) = \frac{\pi}{N \omega} \sum_{n=1}^{2N} \sum_{m=1}^{2N} (f(E_n) - f(E_m)) |J^x_{nm}|^2 \delta(\omega - (E_m - E_n)) $$
+$$ \text{Re}\,\sigma_{xx}(\omega) = \frac{\pi}{N \omega} \sum_{n\ne m}^{2N} (f(E_n) - f(E_m)) |J^x_{nm}(0)|^2 \delta(\omega - (E_m - E_n)) $$
 取直流极限为（Kubo–Greenwood公式）：
-$$ \sigma_{\text{DC}}=\text{Re}\,\sigma_{xx}(\omega\to0)=\frac{\pi}{N} \sum_{n=1}^{2N} \sum_{m=1}^{2N} \left( -f'(E_n) \right) |J^x_{nm}|^2 \delta(E_m - E_n) $$
+$$ \sigma_{\text{DC}}=\text{Re}\,\sigma_{xx}(\omega\to0)=\frac{\pi}{N} \sum_{n\ne m}^{2N} \left( -f'(E_n) \right) |J^x_{nm}(0)|^2 \delta(E_m - E_n) $$
 其中 $-f'(E_n) =\beta f(E_n) [1 - f(E_n)]$ 。注意这只包含了 regular part，没有包含超流导致的发散项 $\pi \rho_s \delta(\omega)$ 。
 
 数值上取 $\delta$ 函数为：

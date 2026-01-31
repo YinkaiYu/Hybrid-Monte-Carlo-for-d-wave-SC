@@ -246,15 +246,16 @@ end
 # ------------------------------------------------
 
 """
-    build_current_operator!(cache::ComputeCache, p::ModelParameters)
+    build_current_operator!(cache::ComputeCache, p::ModelParameters; qx=0.0, qy=0.0, store=:q0)
 
-构建 x 方向电流算符的稀疏矩阵 Jx。
-Jx = i * sum ( t * c^dag_i c_{i+x} + t' * ... - h.c. )
-注意：在 Nambu 表象下，Jx = diag(Jx_particle, Jx_particle)。
-因为 Jx_hole = Jx_particle (对于实数 t)。
+构建 x 方向电流算符的稀疏矩阵 Jx(q)。
+Jx(q) = i * sum ( t * c^dag_i c_{i+x} + t' * ... - h.c. ) * exp(i q·r_i)
+注意：q ≠ 0 时 Jx(q) 一般不再是 Hermitian。
+在 Nambu 表象下仍使用 blockdiag(Jx_part, Jx_part)，与现有公式保持一致。
 """
-function build_current_operator!(cache::ComputeCache, p::ModelParameters)
+function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Float64=0.0, qy::Float64=0.0, store::Symbol=:q0)
     N = p.N
+    Lx = p.Lx
     # 使用 Triplet 格式构建稀疏矩阵 (I, J, V)
     I_idx = Int[]
     J_idx = Int[]
@@ -268,25 +269,30 @@ function build_current_operator!(cache::ComputeCache, p::ModelParameters)
     
     # 遍历所有格点构建 Particle block (N x N)
     for i in 1:N
+        # 将 i 转换为 (x, y) 坐标，1-based
+        x = mod1(i, Lx)
+        y = cld(i, Lx)
+        phase = cis(qx * (x - 1) + qy * (y - 1))
+
         # +x neighbor (Nearest Neighbor)
         j_x = p.nn_table[i, 1] 
-        # Term: i * t * (c^dag_i c_j - c^dag_j c_i)
-        val = im * p.t
-        add_term!(i, j_x, val)      # <i|J|j>
-        add_term!(j_x, i, conj(val)) # <j|J|i>
+        # Term: i * t * (c^dag_i c_j - c^dag_j c_i) * phase
+        val = im * p.t * phase
+        add_term!(i, j_x, val)       # <i|J|j>
+        add_term!(j_x, i, -val)      # <j|J|i>
         
         # +x+y (dir=1 in nnn)
         j_xpy = p.nnn_table[i, 1]
-        val_tp = im * p.tp 
+        val_tp = im * p.tp * phase
         add_term!(i, j_xpy, val_tp)
-        add_term!(j_xpy, i, conj(val_tp))
+        add_term!(j_xpy, i, -val_tp)
         
         # +x-y (dir=4 in nnn, neighbor of i is i+x-y)
         # 注意: nnn_table 定义: 1:+x+y, 2:-x+y, 3:-x-y, 4:+x-y
         j_xmy = p.nnn_table[i, 4] 
-        val_tp = im * p.tp 
+        val_tp = im * p.tp * phase
         add_term!(i, j_xmy, val_tp)
-        add_term!(j_xmy, i, conj(val_tp))
+        add_term!(j_xmy, i, -val_tp)
     end
     
     # 构建 N x N 稀疏矩阵
@@ -295,8 +301,15 @@ function build_current_operator!(cache::ComputeCache, p::ModelParameters)
     # 构建完整的 2N x 2N Nambu 矩阵
     # J_BdG = [ Jx_part   0       ]
     #         [ 0         Jx_part ]
-    # 因为对于实数 hopping，空穴部分的电流算符矩阵元与粒子部分相同
-    cache.Jx_sparse = blockdiag(Jx_part, Jx_part)
+    Jx_sparse = blockdiag(Jx_part, Jx_part)
+
+    if store === :q0
+        cache.Jx_sparse_q0 = Jx_sparse
+    elseif store === :qy
+        cache.Jx_sparse_qy = Jx_sparse
+    else
+        error("Unknown current-operator cache tag: $store")
+    end
     
     return nothing
 end
@@ -378,18 +391,20 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     kpath_weights = cache.kpath_weights
     
     # ------------------------------------------------
-    # A. 计算电流矩阵元 J_mn = <n|Jx|m>
+    # A. 计算电流矩阵元 J_mn(q) = <n|Jx(q)|m> (用于超流刚度)
     # ------------------------------------------------
     # 1. Temp = Jx_sparse * U  (Sparse * Dense -> Dense)
     # 2. J_mn = U' * Temp      (Dense * Dense -> Dense)
     # 这是 BLAS Level 3 操作，MKL 极快。
     
-    # 注意：Jx_sparse 是常数，如果还没初始化需要初始化
-    if nnz(cache.Jx_sparse) == 0
-        build_current_operator!(cache, p)
+    qy = 2π / Ly
+
+    # 注意：Jx_sparse_qy 是常数，如果还没初始化需要初始化
+    if nnz(cache.Jx_sparse_qy) == 0
+        build_current_operator!(cache, p; qx=0.0, qy=qy, store=:qy)
     end
     
-    mul!(cache.temp_JU, cache.Jx_sparse, U)
+    mul!(cache.temp_JU, cache.Jx_sparse_qy, U)
     mul!(cache.J_mn, U', cache.temp_JU) 
     
     J_mn = cache.J_mn # Alias
@@ -419,12 +434,13 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
         end
     end
     
-    # 2. 顺磁项 Lambda_xx
-    # sum_{n,m} (f(n) - f(m))/(Em - En) |J_nm|^2
+    # 2. 顺磁项 Lambda_xx(qx=0, qy=2π/Ly)
+    # sum_{n≠m} (f(n) - f(m))/(Em - En) |J_nm(q)|^2
     Lambda_xx = 0.0
     
     @inbounds for n in 1:dim
         for m in 1:dim
+            m == n && continue
             diff_E = E[m] - E[n]
             diff_f = f[n] - f[m]
             
@@ -445,10 +461,18 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     superfluid_stiffness = val_dia - Lambda_xx
     
     # ------------------------------------------------
-    # C. 光电导与直流电导
+    # C. 光电导与直流电导 (q=0)
     # ------------------------------------------------
-    # Re σ(ω) = (π/Nω) * sum_{n,m} (f(n)-f(m)) |J|^2 delta(ω - (Em - En))
+    # Re σ(ω) = (π/Nω) * sum_{n≠m} (f(n)-f(m)) |J|^2 delta(ω - (Em - En))
     # DC: ω -> 0 limit.
+
+    # 切换到 q=0 的电流矩阵元
+    if nnz(cache.Jx_sparse_q0) == 0
+        build_current_operator!(cache, p; qx=0.0, qy=0.0, store=:q0)
+    end
+    mul!(cache.temp_JU, cache.Jx_sparse_q0, U)
+    mul!(cache.J_mn, U', cache.temp_JU)
+    J_mn = cache.J_mn
     
     # Grid
     fill!(σ_ω, 0.0)
@@ -460,14 +484,16 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     end
     
     @inbounds for n in 1:dim
+        fprime = β * f[n] * (1.0 - f[n])
         for m in 1:dim
+            m == n && continue
             Em_En = E[m] - E[n]
             J2 = abs2(J_mn[n, m])
             
             # 1. DC Conductivity
             # sum (-f') |J|^2 delta(Em - En)
             # -f' = β * f * (1-f)
-            dc_cond += (β * f[n] * (1.0 - f[n])) * J2 * lorentzian(Em_En, p.η)
+            dc_cond += fprime * J2 * lorentzian(Em_En, p.η)
             
             # 2. Optical Conductivity
             fn_fm = f[n] - f[m]
