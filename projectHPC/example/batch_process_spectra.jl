@@ -17,36 +17,48 @@ function process_single_config(jld_path)
     try
         jldopen(jld_path, "r") do file
             keys_in_file = keys(file)
-            # 必须包含 sweep_ 数据
+            # sweep_ 或 final 数据
             sweep_keys = filter(k -> startswith(k, "sweep_"), keys_in_file)
-            if isempty(sweep_keys) return nothing end
+            has_final = haskey(file, "final")
+            if isempty(sweep_keys) && !has_final
+                return nothing
+            end
             
             # 必须包含 params
             if !haskey(file, "params") return nothing end
             
-            # 读取第一个 bin 初始化
-            g1 = file[sweep_keys[1]]
-            sum_opt = copy(g1["opt_cond"])
-            sum_dos = copy(g1["dos"])
-            sum_dos_AN = copy(g1["dos_AN"])
-            sum_ak = copy(g1["A_k0"])
-            sum_akpath = haskey(g1, "A_kpath") ? copy(g1["A_kpath"]) : nothing
-            count = 1
-            
-            # 累加后续 bin
-            for i in 2:length(sweep_keys)
-                g = file[sweep_keys[i]]
-                sum_opt .+= g["opt_cond"]
-                sum_dos .+= g["dos"]
-                sum_dos_AN .+= g["dos_AN"]
-                sum_ak .+= g["A_k0"]
-                if sum_akpath !== nothing
-                    if !haskey(g, "A_kpath")
-                        return nothing
+            # 初始化与累加
+            if !isempty(sweep_keys)
+                g1 = file[sweep_keys[1]]
+                sum_opt = copy(g1["opt_cond"])
+                sum_dos = copy(g1["dos"])
+                sum_dos_AN = copy(g1["dos_AN"])
+                sum_ak = copy(g1["A_k0"])
+                sum_akpath = haskey(g1, "A_kpath") ? copy(g1["A_kpath"]) : nothing
+                count = 1
+                
+                for i in 2:length(sweep_keys)
+                    g = file[sweep_keys[i]]
+                    sum_opt .+= g["opt_cond"]
+                    sum_dos .+= g["dos"]
+                    sum_dos_AN .+= g["dos_AN"]
+                    sum_ak .+= g["A_k0"]
+                    if sum_akpath !== nothing
+                        if !haskey(g, "A_kpath")
+                            return nothing
+                        end
+                        sum_akpath .+= g["A_kpath"]
                     end
-                    sum_akpath .+= g["A_kpath"]
+                    count += 1
                 end
-                count += 1
+            else
+                g1 = file["final"]
+                sum_opt = copy(g1["opt_cond"])
+                sum_dos = copy(g1["dos"])
+                sum_dos_AN = copy(g1["dos_AN"])
+                sum_ak = copy(g1["A_k0"])
+                sum_akpath = haskey(g1, "A_kpath") ? copy(g1["A_kpath"]) : nothing
+                count = 1
             end
             
             p = file["params"]
@@ -96,7 +108,14 @@ end
 # --- 2. 处理单个 T 目录 ---
 function process_T_directory(dir_path)
     conf_dirs = glob("conf_*", dir_path)
-    if isempty(conf_dirs) return end
+    if isempty(conf_dirs)
+        jld_path = joinpath(dir_path, "spectra_bins.jld2")
+        if isfile(jld_path)
+            conf_dirs = [dir_path]
+        else
+            return
+        end
+    end
     
     println("Processing $(basename(dir_path))...")
     

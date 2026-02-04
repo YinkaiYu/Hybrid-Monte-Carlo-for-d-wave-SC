@@ -15,16 +15,24 @@ function append_scatter!(io, jld_path, conf_id)
     total = 0
     try
         jldopen(jld_path, "r") do file
-            for key in keys(file)
-                if !startswith(key, "sweep_")
-                    continue
+            sweep_keys = filter(k -> startswith(k, "sweep_"), keys(file))
+            if !isempty(sweep_keys)
+                for key in sweep_keys
+                    sweep = try
+                        parse(Int, split(key, "_")[2])
+                    catch
+                        -1
+                    end
+                    d_local = file[key]["d_local"]
+                    @inbounds for (idx, val) in enumerate(d_local)
+                        @printf(io, "%s,%d,%d,%.8e,%.8e\n",
+                                conf_id, sweep, idx, real(val), imag(val))
+                    end
+                    total += length(d_local)
                 end
-                sweep = try
-                    parse(Int, split(key, "_")[2])
-                catch
-                    -1
-                end
-                d_local = file[key]["d_local"]
+            elseif haskey(file, "final")
+                d_local = file["final"]["d_local"]
+                sweep = 0
                 @inbounds for (idx, val) in enumerate(d_local)
                     @printf(io, "%s,%d,%d,%.8e,%.8e\n",
                             conf_id, sweep, idx, real(val), imag(val))
@@ -42,7 +50,12 @@ end
 function process_T_directory(dir_path)
     conf_dirs = glob("conf_*", dir_path)
     if isempty(conf_dirs)
-        return
+        jld_path = joinpath(dir_path, "pairing_scatter.jld2")
+        if isfile(jld_path)
+            conf_dirs = [dir_path]
+        else
+            return
+        end
     end
 
     println("Processing $(basename(dir_path))...")

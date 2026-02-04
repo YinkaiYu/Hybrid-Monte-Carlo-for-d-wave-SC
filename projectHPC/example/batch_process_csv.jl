@@ -27,7 +27,7 @@ function read_conf_robust(filepath)
 
         col_names = vec(header)
         # 排除非物理量列
-        exclude = ["Sweep", "Accepted", "dH", "Step"]
+        exclude = ["Sweep", "Accepted", "dH", "Step", "Iter"]
         indices = findall(x -> !(string(x) in exclude), col_names)
 
         if isempty(indices) return nothing, nothing end
@@ -93,8 +93,14 @@ for t_dir in T_dirs
     end
     union!(all_keys, keys(p_dict))
     
-    # 寻找该温度下的所有 conf
+    # 寻找该温度下的所有 conf；若没有 conf_*，则直接用 T 目录
     conf_dirs = glob("conf_*", t_dir)
+    if isempty(conf_dirs)
+        obs_path = joinpath(t_dir, "observables.csv")
+        if isfile(obs_path)
+            conf_dirs = [t_dir]
+        end
+    end
     obs_dict = Dict{String, Vector{Float64}}()
     
     real_n_conf = 0 # 有效构型计数器
@@ -179,7 +185,7 @@ param_keys = sort(collect(filter(k -> !endswith(k, "_mean") && !endswith(k, "_er
 data_keys = sort(collect(filter(k -> endswith(k, "_mean") || endswith(k, "_err"), all_keys)))
 
 # 调整列顺序
-priority = ["T", "beta", "n_imp", "real_n_conf"]
+priority = ["T", "β", "beta", "n_imp", "real_n_conf"]
 final_params = filter(k -> k in priority, param_keys)
 append!(final_params, filter(k -> !(k in priority), param_keys))
 final_header = vcat(final_params, data_keys)
