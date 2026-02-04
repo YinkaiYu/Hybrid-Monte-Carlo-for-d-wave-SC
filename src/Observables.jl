@@ -240,6 +240,51 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
                              D2, D4, d2_avg, d4_avg, d_local)
 end
 
+"""
+    compute_Δ_MF(cache::ComputeCache, p::ModelParameters)
+
+计算均匀 d-wave 平均场 Δ_MF（实标量）。
+基于全局配对关联 D = (1/N) * sum_i [ J * (P_x - P_y) / 2 ]。
+"""
+function compute_Δ_MF(cache::ComputeCache, p::ModelParameters)
+    N = p.N
+    U = cache.U
+    E = cache.E_n
+    f = cache.fermi_factors
+
+    # 预计算费米分布
+    @inbounds @simd for n in 1:(2*N)
+        f[n] = logistic(-p.β * E[n])
+    end
+
+    sum_pair_global = 0.0 + 0.0im
+
+    @inbounds for i in 1:N
+        jx = p.nn_table[i, 1] # +x
+        jy = p.nn_table[i, 2] # +y
+
+        ρ_1x = zero(ComplexF64)
+        ρ_2x = zero(ComplexF64)
+        ρ_1y = zero(ComplexF64)
+        ρ_2y = zero(ComplexF64)
+
+        @simd for n in 1:(2*N)
+            ρ_1x += U[i, n] * f[n] * conj(U[jx+N, n])
+            ρ_2x += U[jx, n] * f[n] * conj(U[i+N, n])
+            ρ_1y += U[i, n] * f[n] * conj(U[jy+N, n])
+            ρ_2y += U[jy, n] * f[n] * conj(U[i+N, n])
+        end
+
+        P_x = -ρ_1x - ρ_2x
+        P_y = -ρ_1y - ρ_2y
+
+        sum_pair_global += p.J * 0.5 * (P_x - P_y)
+    end
+
+    D = sum_pair_global / N
+    return real(D)
+end
+
 
 # ------------------------------------------------
 # 1. 初始化辅助工具

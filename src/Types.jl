@@ -30,6 +30,12 @@ struct ModelParameters
     β::Float64   # 逆温度
     J::Float64      # 耦合常数
     mass::Float64   # HMC 虚拟质量
+
+    # 平均场迭代参数 (均匀 d-wave)
+    Δ_MF_0::Float64       # 迭代初始值 (正实数)
+    α::Float64            # 线性混合系数
+    Δ_MF_tol::Float64     # 迭代收敛阈值
+    Δ_MF_max_iter::Int    # 最大迭代步数
     
     # 预计算的邻居列表 (用空间换时间)
     # 存储形式：neighbor_table[site_index, direction_index]
@@ -46,8 +52,21 @@ struct ModelParameters
 end
 
 # 构造函数：输入基本参数，自动计算 N 和邻居表
+function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, β, J, mass;
+                         W::Float64=0.0, n_imp::Float64=0.0,
+                         η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0,
+                         Δ_MF_0::Float64=0.1, α::Float64=0.5, Δ_MF_tol::Float64=1e-6,
+                         Δ_MF_max_iter::Int=2000)
+    return ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass;
+                           η=η, Δω=Δω, ω_max=ω_max,
+                           Δ_MF_0=Δ_MF_0, α=α, Δ_MF_tol=Δ_MF_tol,
+                           Δ_MF_max_iter=Δ_MF_max_iter)
+end
+
 function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, mass;
-                         η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0)
+                         η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0,
+                         Δ_MF_0::Float64=0.1, α::Float64=0.5, Δ_MF_tol::Float64=1e-6,
+                         Δ_MF_max_iter::Int=2000)
     N = Lx * Ly
     # 初始化邻居表
     # 约定方向：1: +x, 2: +y, 3: -x, 4: -y
@@ -86,6 +105,7 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, mass;
         Float64(t), Float64(tp), Float64(μ), 
         Float64(W), Float64(n_imp), 
         Float64(β), Float64(J), Float64(mass),
+        Float64(Δ_MF_0), Float64(α), Float64(Δ_MF_tol), Int(Δ_MF_max_iter),
         nn_table, nnn_table,
         Float64(η), Float64(ω_min), Float64(ω_max), Float64(Δω), n_ω)
 end
@@ -102,6 +122,9 @@ mutable struct SimulationState
     # 杂质构型 (静态无序)
     # discret_pot[i] = W or 0.0
     disorder_pot::Vector{Float64} 
+
+    # 平均场 d-wave 序参量 (实标量)
+    Δ_MF::Float64
     
     # 序参量场 Δ_ij
     # 我们只需要定义正方向的 bond: +x 和 +y。
@@ -120,17 +143,21 @@ function initialize_state(p::ModelParameters)
     disorder_pot = zeros(Float64, p.N)
     # 随机选取 n_imp 比例的格点放置杂质
     n_sites_imp = round(Int, p.N * p.n_imp)
-    imp_indices = randperm(p.N)[1:n_sites_imp] # 需要 using Random
-    disorder_pot[imp_indices] .= p.W
+    if n_sites_imp > 0
+        imp_indices = randperm(p.N)[1:n_sites_imp] # 需要 using Random
+        disorder_pot[imp_indices] .= p.W
+    end
     
-    # 2. 初始化 Delta (比如随机热启动或冷启动)
-    # 这里先给一个小的随机值
-    Δ = (rand(ComplexF64, p.N, 2) .- (0.5 + 0.5im)) .* 0.1
+    # 2. 初始化 Delta (均匀 d-wave 平均场)
+    Δ_MF = p.Δ_MF_0
+    Δ = zeros(ComplexF64, p.N, 2)
+    Δ[:, 1] .= Δ_MF
+    Δ[:, 2] .= -Δ_MF
     
     # 3. 初始化 Pi (置零，运行HMC时会重置)
     π = zeros(ComplexF64, p.N, 2)
     
-    return SimulationState(disorder_pot, Δ, π)
+    return SimulationState(disorder_pot, Δ_MF, Δ, π)
 end
 
 # ---------------------------------------------------------
