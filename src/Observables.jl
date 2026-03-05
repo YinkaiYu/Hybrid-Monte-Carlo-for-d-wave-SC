@@ -81,6 +81,10 @@ struct ObservablesResult
     D4::Float64      # |<D>|^4
     d2_avg::Float64  # (1/N) * sum_i |<d_i>|^2
     d4_avg::Float64  # (1/N) * sum_i |<d_i>|^4
+    S_L2_L2::Float64 # S(L/2, L/2)
+    S_L2_0::Float64  # S(L/2, 0)
+    S_1_0::Float64   # S(1, 0)
+    F_0_0::Float64   # F(0, 0)
     d_local::Vector{ComplexF64} # 每个格点的 <d_i>
 end
 
@@ -120,8 +124,45 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     val_local = sum_local / N
     val_global = abs(sum_global / N)
     val_S = abs2(sum_global / N) # 结构因子
+
+    # --- 2. 配对场相位关联 ---
+    Lx = p.Lx
+    Ly = p.Ly
+    x_idx = cache.x_idx
+    y_idx = cache.y_idx
+    lx_half = fld(Lx, 2)
+    ly_half = fld(Ly, 2)
+
+    get_idx_shift(i::Int, sx::Int, sy::Int) = begin
+        x = mod1(x_idx[i] + sx, Lx)
+        y = mod1(y_idx[i] + sy, Ly)
+        (y - 1) * Lx + x
+    end
+
+    sum_S_L2_L2 = 0.0
+    sum_S_L2_0 = 0.0
+    sum_S_1_0 = 0.0
+    sum_F_0_0 = 0.0
+
+    @inbounds for i in 1:N
+        θx_i = angle(state.Δ[i, 1])
+
+        j_l2l2 = get_idx_shift(i, lx_half, ly_half)
+        j_l20 = get_idx_shift(i, lx_half, 0)
+        j_10 = get_idx_shift(i, 1, 0)
+
+        sum_S_L2_L2 += cos(θx_i - angle(state.Δ[j_l2l2, 1]))
+        sum_S_L2_0 += cos(θx_i - angle(state.Δ[j_l20, 1]))
+        sum_S_1_0 += cos(θx_i - angle(state.Δ[j_10, 1]))
+        sum_F_0_0 += cos(θx_i - angle(state.Δ[i, 2]))
+    end
+
+    val_S_L2_L2 = sum_S_L2_L2 / N
+    val_S_L2_0 = sum_S_L2_0 / N
+    val_S_1_0 = sum_S_1_0 / N
+    val_F_0_0 = sum_F_0_0 / N
     
-    # --- 2. 电子/空穴浓度 ---
+    # --- 3. 电子/空穴浓度 ---
     # p = (1/N) * sum_{E_n > 0} ( sum_i (|u|^2 - |v|^2) ) * tanh(βEn/2)
     # 利用 cache.U 和 cache.E_n
     
@@ -149,7 +190,7 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     
     val_hole = total_p_term / N
     
-    # --- 3. 能量 (假设外部已计算，或者重新算) ---
+    # --- 4. 能量 (假设外部已计算，或者重新算) ---
     # 1. 费米子部分
     # E_fermion (从缓存读取)
     # - sum_{E>0} βE + 2*log1p(exp(-βE))
@@ -237,7 +278,9 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     
     return ObservablesResult(total_energy, val_amp, val_local, val_global, val_S, val_hole,
                              val_diff, val_pair, val_localpair,
-                             D2, D4, d2_avg, d4_avg, d_local)
+                             D2, D4, d2_avg, d4_avg,
+                             val_S_L2_L2, val_S_L2_0, val_S_1_0, val_F_0_0,
+                             d_local)
 end
 
 

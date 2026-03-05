@@ -69,7 +69,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     
     # 写入 CSV 表头
     # 基础物理量
-    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair,D2,D4,Avg_d2,Avg_d4")
+    println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair,D2,D4,Avg_d2,Avg_d4,S_L2_L2,S_L2_0,S_1_0,F_0_0")
     # 输运标量
     println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
     
@@ -170,11 +170,12 @@ function run_simulation(p::ModelParameters, out_dir::String;
         
         # 写入 Observables CSV
         # Sweep, Accepted, dH, ...
-        line = @sprintf("%d,%d,%.5e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n", 
+        line = @sprintf("%d,%d,%.5e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n", 
                 i, acc, dH, obs.total_energy, 
                 obs.Δ_amp, obs.Δ_local, obs.Δ_global, obs.S_Δ, obs.hole_conc,
                 obs.Δ_diff, obs.Δ_pair, obs.Δ_localpair,
-                obs.D2, obs.D4, obs.d2_avg, obs.d4_avg)
+                obs.D2, obs.D4, obs.d2_avg, obs.d4_avg,
+                obs.S_L2_L2, obs.S_L2_0, obs.S_1_0, obs.F_0_0)
         write(f_obs, line)
         flush(f_obs) # 实时落盘
 

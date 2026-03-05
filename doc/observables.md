@@ -157,3 +157,16 @@ $$
 B_{\text{local}} = 1-\frac{\overline{\frac1N\sum_{i=1}^N \left| \braket{d_i} \right|^4}}{2 \left( \overline{\frac1N\sum_{i=1}^N \left| \braket{d_i} \right|^2} \right)^2}
 $$
 有配对时 $B=0.5$；无配对时 $B=0$.
+
+## 相位关联
+
+为了与 Phys. Rev. Lett. **94**, 217001 和 Phys. Rev. B **84**, 024522 做比对，我们添加几个可观测量，以显示配对场（被蒙卡采样的经典场）的相位关联：
+$$
+S(l_x,l_y)=\frac1N\sum_i \braket{e^{\mathrm{i}\theta_i^x}e^{-\mathrm{i}\theta_{i+l}^x}}=\frac1N\sum_i\left\langle\mathrm{arg}\left(\Delta_{i,i+\hat{x}}\Delta_{i+l,i+l+\hat{x}}^*\right)\right\rangle
+$$
+$$
+F(l_x,l_y)=\frac1N\sum_i \braket{e^{\mathrm{i}\theta_i^x}e^{-\mathrm{i}\theta_{i+l}^y}}=\frac1N\sum_i\left\langle\mathrm{arg}\left(\Delta_{i,i+\hat{y}}\Delta_{i+l,i+l+\hat{y}}^*\right)\right\rangle
+$$
+文献 Phys. Rev. Lett. **94**, 217001 计算的是 $S(\frac{L}{2},\frac{L}{2})$, $S(\frac{L}{2},0)$, $F(0,0)$
+文献 Phys. Rev. B **84**, 024522 计算的是 $S(\frac{L}{2},0)$
+我们也需要把这些量输出出来。
