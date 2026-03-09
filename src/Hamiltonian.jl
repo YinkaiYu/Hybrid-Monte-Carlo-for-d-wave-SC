@@ -16,7 +16,7 @@ function init_static_H!(cache::ComputeCache, p::ModelParameters, state::Simulati
     
     # 2. 对角项 (势能)
     @inbounds for i in 1:N
-        term = state.disorder_pot[i] - p.μ
+        term = state.disorder_pot[i] - state.μ_eff
         H[i, i] = term
         H[i+N, i+N] = -term
     end
@@ -62,21 +62,21 @@ function update_H_BdG!(cache::ComputeCache, p::ModelParameters, state::Simulatio
     # 每一个 bond (i, j) 贡献两个矩阵元:
     # (i, j+N) -> Δ_{ij}
     # (j, i+N) -> Δ_{ji} = Δ_{ij} 
-    # 也即 H_BdG(Top-Right) = (1/2) * Δ_{ij} * ( c^†_{i↑} c^†_{j↓} + c^†_{j↑} c^†_{i↓} )
+    # 也即 H_BdG(Top-Right) = Δ_{ij} * ( c^†_{i↑} c^†_{j↓} + c^†_{j↑} c^†_{i↓} )
     
     # 我们遍历 state.Δ，它只存储了 +x (dir=1) 和 +y (dir=2) 的键
     @inbounds for i in 1:N
         # +x direction bond
         j_x = p.nn_table[i, 1] 
-        val_x = 0.5 * state.Δ[i, 1]
+        val_x = state.Δ[i, 1]
         
         # 对应的矩阵元，直接覆盖原有数值 (Overwrite)
-        H[i, j_x + N] = val_x  # (1/2) * Δ_{ij} c^†_{i↑} c^†_{j↓}
-        H[j_x, i + N] = val_x  # (1/2) * Δ_{ij} c^†_{j↑} c^†_{i↓} 
+        H[i, j_x + N] = val_x  # Δ_{ij} c^†_{i↑} c^†_{j↓}
+        H[j_x, i + N] = val_x  # Δ_{ij} c^†_{j↑} c^†_{i↓}
         
         # +y direction bond
         j_y = p.nn_table[i, 2]
-        val_y = 0.5 * state.Δ[i, 2]
+        val_y = state.Δ[i, 2]
         
         H[i, j_y + N] = val_y
         H[j_y, i + N] = val_y

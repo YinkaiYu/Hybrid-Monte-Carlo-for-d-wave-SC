@@ -20,16 +20,24 @@ struct ModelParameters
     # 物理参数
     t::Float64   # 近邻跃迁
     tp::Float64  # 次近邻 t'
-    μ::Float64  # 化学势
-    
+    μ::Float64  # 固定化学势，或目标密度模式下的初始化学势
+    has_target_n::Bool # 是否在热化阶段按目标电子密度调节 μ
+    target_n::Float64  # 目标电子密度 n (仅 has_target_n=true 有效)
+
     # 无序参数
     W::Float64      # 杂质势强度
     n_imp::Float64  # 杂质浓度
-    
+
     # HMC / 相互作用参数
     β::Float64   # 逆温度
-    J::Float64      # 耦合常数
+    V::Float64      # 耦合常数 (benchmark-note 记号)
     mass::Float64   # HMC 虚拟质量
+    μ_tune_gain::Float64    # μ 调节比例系数
+    μ_tune_interval::Int    # μ 调节间隔 (sweeps)
+    μ_tune_step_max::Float64 # 每次 μ 最大更新幅度
+    μ_tune_tol::Float64      # |n - target_n| 容差，小于该值时停止调 μ
+    μ_min::Float64          # μ 下界
+    μ_max::Float64          # μ 上界
     
     # 预计算的邻居列表 (用空间换时间)
     # 存储形式：neighbor_table[site_index, direction_index]
@@ -45,9 +53,34 @@ struct ModelParameters
     n_ω::Int            # 频率点数
 end
 
-# 构造函数：输入基本参数，自动计算 N 和邻居表
-function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, mass;
-                         η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0)
+function Base.getproperty(p::ModelParameters, sym::Symbol)
+    if sym === :J
+        return getfield(p, :V)
+    end
+    return getfield(p, sym)
+end
+
+function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool, target_n, W, n_imp, β, V, mass;
+                                 μ_tune_gain::Float64, μ_tune_interval::Int, μ_tune_step_max::Float64,
+                                 μ_tune_tol::Float64,
+                                 μ_min::Float64, μ_max::Float64,
+                                 η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0)
+    if μ_tune_interval <= 0
+        error("μ_tune_interval must be > 0")
+    end
+    if μ_tune_step_max <= 0
+        error("μ_tune_step_max must be > 0")
+    end
+    if μ_tune_tol <= 0
+        error("μ_tune_tol must be > 0")
+    end
+    if μ_min >= μ_max
+        error("μ_min must be smaller than μ_max")
+    end
+    if has_target_n && !(0.0 <= target_n <= 2.0)
+        error("target_n must be within [0, 2]")
+    end
+
     N = Lx * Ly
     # 初始化邻居表
     # 约定方向：1: +x, 2: +y, 3: -x, 4: -y
@@ -82,12 +115,59 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, J, mass;
     ω_min = η
     n_ω = floor(Int, (ω_max - ω_min) / Δω) + 1
     
-    return ModelParameters(Lx, Ly, N, 
-        Float64(t), Float64(tp), Float64(μ), 
-        Float64(W), Float64(n_imp), 
-        Float64(β), Float64(J), Float64(mass),
+    return ModelParameters(Lx, Ly, N,
+        Float64(t), Float64(tp), Float64(μ),
+        Bool(has_target_n), Float64(target_n),
+        Float64(W), Float64(n_imp),
+        Float64(β), Float64(V), Float64(mass),
+        Float64(μ_tune_gain), Int(μ_tune_interval), Float64(μ_tune_step_max), Float64(μ_tune_tol),
+        Float64(μ_min), Float64(μ_max),
         nn_table, nnn_table,
         Float64(η), Float64(ω_min), Float64(ω_max), Float64(Δω), n_ω)
+end
+
+# 兼容旧接口：显式固定 μ
+function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, V, mass;
+                         η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0,
+                         μ_tune_gain::Float64=0.50, μ_tune_interval::Int=1,
+                         μ_tune_step_max::Float64=0.08, μ_tune_tol::Float64=0.005,
+                         μ_min::Float64=-4.0, μ_max::Float64=4.0)
+    return _build_model_parameters(Lx, Ly, t, tp, μ, false, NaN, W, n_imp, β, V, mass;
+                                   μ_tune_gain=μ_tune_gain, μ_tune_interval=μ_tune_interval,
+                                   μ_tune_step_max=μ_tune_step_max, μ_tune_tol=μ_tune_tol,
+                                   μ_min=μ_min, μ_max=μ_max,
+                                   η=η, Δω=Δω, ω_max=ω_max)
+end
+
+# 新接口：μ 与 target_n 二选一
+function ModelParameters(Lx::Int, Ly::Int, t, tp, W, n_imp, β, V, mass;
+                         μ::Union{Nothing,Real}=nothing, target_n::Union{Nothing,Real}=nothing,
+                         μ_init::Real=0.0,
+                         η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0,
+                         μ_tune_gain::Float64=0.50, μ_tune_interval::Int=1,
+                         μ_tune_step_max::Float64=0.08, μ_tune_tol::Float64=0.005,
+                         μ_min::Float64=-4.0, μ_max::Float64=4.0)
+    has_mu = μ !== nothing
+    has_target_n = target_n !== nothing
+    if has_mu == has_target_n
+        error("Specify exactly one of μ or target_n.")
+    end
+
+    if has_mu
+        μ_val = Float64(μ)
+        return _build_model_parameters(Lx, Ly, t, tp, μ_val, false, NaN, W, n_imp, β, V, mass;
+                                       μ_tune_gain=μ_tune_gain, μ_tune_interval=μ_tune_interval,
+                                       μ_tune_step_max=μ_tune_step_max, μ_tune_tol=μ_tune_tol,
+                                       μ_min=μ_min, μ_max=μ_max,
+                                       η=η, Δω=Δω, ω_max=ω_max)
+    end
+
+    μ_val = Float64(μ_init)
+    return _build_model_parameters(Lx, Ly, t, tp, μ_val, true, target_n, W, n_imp, β, V, mass;
+                                   μ_tune_gain=μ_tune_gain, μ_tune_interval=μ_tune_interval,
+                                   μ_tune_step_max=μ_tune_step_max, μ_tune_tol=μ_tune_tol,
+                                   μ_min=μ_min, μ_max=μ_max,
+                                   η=η, Δω=Δω, ω_max=ω_max)
 end
 
 # ---------------------------------------------------------
@@ -113,6 +193,9 @@ mutable struct SimulationState
     # 共轭动量场 π_ij (对应 Delta)
     # 注意：在函数局部变量中尽量不要用 π，以免覆盖 Base.pi，但在 struct 字段里没问题
     π::Matrix{ComplexF64}
+
+    # 当前 sweep 使用的有效化学势
+    μ_eff::Float64
 end
 
 function initialize_state(p::ModelParameters)
@@ -130,7 +213,8 @@ function initialize_state(p::ModelParameters)
     # 3. 初始化 Pi (置零，运行HMC时会重置)
     π = zeros(ComplexF64, p.N, 2)
     
-    return SimulationState(disorder_pot, Δ, π)
+    μ_eff = p.μ
+    return SimulationState(disorder_pot, Δ, π, μ_eff)
 end
 
 # ---------------------------------------------------------

@@ -8,7 +8,7 @@ using JLD2
     compute_forces!(cache::ComputeCache, p::ModelParameters, state::SimulationState)
 
 计算 HMC 演化所需的力 F_ij，并存储在 cache.forces 中。
-公式：F_ij = -β/(2J) * ( Δ_ij - J * P_ij )
+公式：F_ij = -β/V * ( Δ_ij - V * P_ij )
 其中 P_ij = <c_i↑ c_j↓ - c_i↓ c_j↑> = -ρ_{i, j+N} - ρ_{j, i+N}
 """
 function compute_forces!(cache::ComputeCache, p::ModelParameters, state::SimulationState)
@@ -18,7 +18,7 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
     E = cache.E_n
     f = cache.fermi_factors
     
-    β_over_2J = p.β / (2 * p.J)
+    β_over_V = p.β / p.V
 
     # 预计算费米分布
     @inbounds @simd for n in 1:(2*N)
@@ -54,7 +54,7 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
             
             # 计算力 F_ij
             Δ_val = state.Δ[i, dir]
-            forces[i, dir] = -β_over_2J * (Δ_val - p.J * P_ij)
+            forces[i, dir] = -β_over_V * (Δ_val - p.V * P_ij)
         end
     end
     
@@ -86,6 +86,42 @@ struct ObservablesResult
     S_1_0::Float64   # S(1, 0)
     F_0_0::Float64   # F(0, 0)
     d_local::Vector{ComplexF64} # 每个格点的 <d_i>
+end
+
+"""
+    measure_hole_concentration(cache::ComputeCache, p::ModelParameters)
+
+从当前 BdG 本征态计算空穴浓度 p_hole。
+"""
+function measure_hole_concentration(cache::ComputeCache, p::ModelParameters)
+    N = p.N
+    U = cache.U
+    E = cache.E_n
+    total_p_term = 0.0
+
+    @inbounds for n in 1:(2*N)
+        En = E[n]
+        if En > 0
+            w_n = 0.0
+            @simd for i in 1:N
+                u2 = abs2(U[i, n])
+                v2 = abs2(U[i+N, n])
+                w_n += (u2 - v2)
+            end
+            total_p_term += w_n * tanh(0.5 * p.β * En)
+        end
+    end
+
+    return total_p_term / N
+end
+
+"""
+    electron_density_from_cache(cache::ComputeCache, p::ModelParameters)
+
+返回电子密度 n。按当前约定 n = 1 - hole_p。
+"""
+function electron_density_from_cache(cache::ComputeCache, p::ModelParameters)
+    return 1.0 - measure_hole_concentration(cache, p)
 end
 
 """
@@ -163,32 +199,7 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     val_F_0_0 = sum_F_0_0 / N
     
     # --- 3. 电子/空穴浓度 ---
-    # p = (1/N) * sum_{E_n > 0} ( sum_i (|u|^2 - |v|^2) ) * tanh(βEn/2)
-    # 利用 cache.U 和 cache.E_n
-    
-    U = cache.U
-    E = cache.E_n
-    total_p_term = 0.0
-    
-    @inbounds for n in 1:(2*N)
-        En = E[n]
-        if En > 0
-            # 计算该本征态的空间权重差 sum(|u|^2 - |v|^2)
-            w_n = 0.0
-            @simd for i in 1:N
-                # u_{n,i} -> U[i, n]
-                # v_{n,i} -> U[i+N, n]
-                u2 = abs2(U[i, n])
-                v2 = abs2(U[i+N, n])
-                w_n += (u2 - v2)
-            end
-            
-            # 乘以 tanh
-            total_p_term += w_n * tanh(0.5 * p.β * En)
-        end
-    end
-    
-    val_hole = total_p_term / N
+    val_hole = measure_hole_concentration(cache, p)
     
     # --- 4. 能量 (假设外部已计算，或者重新算) ---
     # 1. 费米子部分
@@ -203,9 +214,9 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     end
 
     # 2. 玻色子势能部分
-    # E_boson = (β / 2J) * sum(|Δ|^2)
+    # E_boson = (β / V) * sum(|Δ|^2)
     # 使用 sum(f, itr) 极其高效，无内存分配
-    coef_boson = p.β / (2 * p.J)
+    coef_boson = p.β / p.V
     E_boson = coef_boson * sum(abs2, state.Δ)
 
     total_energy = (E_fermion + E_boson)/N
@@ -219,6 +230,8 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     sum_d2 = 0.0
     sum_d4 = 0.0
     d_local = cache.d_local_cache
+    U = cache.U
+    E = cache.E_n
     
     # 重新刷新 fermi factors (确保是最新的)
     @inbounds @simd for n in 1:(2*N)
@@ -250,15 +263,14 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
         end
         P_y = -ρ_1y - ρ_2y
         
-        # 1. Diff: |Δ - J*P|
+        # 1. Diff: |Δ - V*P|
         # 记得 state.Δ 也是 (N, 2)
-        diff_x = abs(state.Δ[i, 1] - p.J * P_x)
-        diff_y = abs(state.Δ[i, 2] - p.J * P_y)
+        diff_x = abs(state.Δ[i, 1] - p.V * P_x)
+        diff_y = abs(state.Δ[i, 2] - p.V * P_y)
         sum_diff += (diff_x + diff_y) / 2.0 # 平均每个 bond 的偏差
         
-        # 2. Pair order parameter (from fermions): J * (P_x - P_y)/2
-        # 注意公式里的 J 因子
-        term = p.J * 0.5 * (P_x - P_y)
+        # 2. Pair order parameter (from fermions): V * (P_x - P_y)/2
+        term = p.V * 0.5 * (P_x - P_y)
         d_local[i] = term
         sum_pair_local += abs(term)
         sum_pair_global += term

@@ -16,10 +16,16 @@ PROJECT_ROOT=/home/zxli_1/yyk2025/2511_dWaveBcs/20251231_sweep-T
 L=20
 t=1.0
 tp=-0.35
+# 模式开关: 1=目标密度n(热化调μ), 0=固定μ
+USE_TARGET_N=1
+# 目标密度模式
+target_n=0.85
+mu_init=-1.23359
+# 固定化学势模式
 mu=-1.23359
-W=1.0
+W=0.0
 n_imp=0.0
-J=0.8
+V=0.8
 mass=1.0
 
 # 4. 测量参数
@@ -32,6 +38,14 @@ Nt_therm_init=26
 Nt_measure=8
 measure_transport_freq=1
 bin_size=5
+
+# 6. 目标密度模式下的 μ 求根参数（hybrid: secant + bracket）
+mu_tune_gain=0.5
+mu_tune_interval=1
+mu_tune_step_max=0.08
+mu_tune_tol=0.005
+mu_min=-4.0
+mu_max=4.0
 # ===========================================
 
 for T in ${T_list[*]}
@@ -48,9 +62,9 @@ do
     cat << EOF > params.jl
 using DwaveHMC
 Lx, Ly = $L, $L
-t, tp, μ = $t, $tp, $mu
+t, tp = $t, $tp
 W, n_imp = $W, $n_imp
-J = $J
+V = $V
 mass = $mass
 T = $T
 β = 1.0 / T
@@ -63,16 +77,48 @@ Nt_therm_init = $Nt_therm_init
 Nt_measure = $Nt_measure
 measure_transport_freq = $measure_transport_freq
 bin_size = $bin_size
+mu_tune_gain = $mu_tune_gain
+mu_tune_interval = $mu_tune_interval
+mu_tune_step_max = $mu_tune_step_max
+mu_tune_tol = $mu_tune_tol
+mu_min = $mu_min
+mu_max = $mu_max
 N_conf = $N_CONFS 
-p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass; 
+EOF
+
+    if [ "$USE_TARGET_N" -eq 1 ]; then
+        cat << EOF >> params.jl
+target_n = $target_n
+mu_init = $mu_init
+p = ModelParameters(Lx, Ly, t, tp, W, n_imp, β, V, mass;
+                    target_n=target_n, μ_init=mu_init,
+                    μ_tune_gain=mu_tune_gain,
+                    μ_tune_interval=mu_tune_interval,
+                    μ_tune_step_max=mu_tune_step_max,
+                    μ_tune_tol=mu_tune_tol,
+                    μ_min=mu_min, μ_max=mu_max,
                     η=η, Δω=Δω, ω_max=ω_max)
 EOF
+        JOB_TAG="n${target_n}"
+    else
+        cat << EOF >> params.jl
+μ = $mu
+p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass;
+                    μ_tune_gain=mu_tune_gain,
+                    μ_tune_interval=mu_tune_interval,
+                    μ_tune_step_max=mu_tune_step_max,
+                    μ_tune_tol=mu_tune_tol,
+                    μ_min=mu_min, μ_max=mu_max,
+                    η=η, Δω=Δω, ω_max=ω_max)
+EOF
+        JOB_TAG="m${mu}"
+    fi
 
     # --- 写入 submit.slurm ---
     # 使用 $N_CORES 变量
     cat << EOF > submit.slurm
 #!/bin/sh
-#SBATCH -J yyk_HMC/L${L}n${n_imp}m${mu}T${T}
+#SBATCH -J yyk_HMC/L${L}nimp${n_imp}${JOB_TAG}T${T}
 #SBATCH -p $queue
 #SBATCH -N $N_NODES
 #SBATCH -n $N_CORES

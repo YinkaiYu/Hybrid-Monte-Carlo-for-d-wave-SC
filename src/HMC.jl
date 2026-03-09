@@ -27,9 +27,9 @@ function compute_total_energy(cache::ComputeCache, p::ModelParameters, state::Si
     end
 
     # 2. 玻色子势能部分
-    # E_boson = (β / 2J) * sum(|Δ|^2)
+    # E_boson = (β / V) * sum(|Δ|^2)
     # 使用 sum(f, itr) 极其高效，无内存分配
-    coef_boson = p.β / (2 * p.J)
+    coef_boson = p.β / p.V
     E_boson = coef_boson * sum(abs2, state.Δ)
 
     # 3. 动能部分

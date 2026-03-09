@@ -4,13 +4,121 @@ using DelimitedFiles
 using JLD2
 
 """
-    calc_optimal_dt(β, J, mass, Nt)
+    calc_optimal_dt(β, V, mass, Nt)
 
 根据谐振子近似计算推荐的时间步长 δt。
 """
-function calc_optimal_dt(β, J, mass, Nt)
-    T = 2 * π * sqrt(mass * J / β) 
+function calc_optimal_dt(β, V, mass, Nt)
+    T = 2 * π * sqrt(mass * V / β)
     return T / (2 * Nt) 
+end
+
+mutable struct MuRootTracker
+    has_prev::Bool
+    μ_prev::Float64
+    err_prev::Float64
+    has_lo::Bool
+    μ_lo::Float64
+    err_lo::Float64
+    has_hi::Bool
+    μ_hi::Float64
+    err_hi::Float64
+end
+
+function MuRootTracker()
+    return MuRootTracker(false, 0.0, 0.0, false, 0.0, 0.0, false, 0.0, 0.0)
+end
+
+function update_bracket!(tracker::MuRootTracker, μ::Float64, err::Float64)
+    if err > 0
+        # n < target，根在更大的 μ 方向，正误差侧取最大的 μ 以收紧区间
+        if !tracker.has_lo || μ > tracker.μ_lo
+            tracker.has_lo = true
+            tracker.μ_lo = μ
+            tracker.err_lo = err
+        end
+    elseif err < 0
+        # n > target，根在更小的 μ 方向，负误差侧取最小的 μ 以收紧区间
+        if !tracker.has_hi || μ < tracker.μ_hi
+            tracker.has_hi = true
+            tracker.μ_hi = μ
+            tracker.err_hi = err
+        end
+    end
+    return nothing
+end
+
+function propose_next_mu(tracker::MuRootTracker, p::ModelParameters, μ::Float64, err::Float64)
+    if abs(err) <= p.μ_tune_tol
+        return μ, :converged
+    end
+    α = clamp(p.μ_tune_gain, 0.0, 1.0)
+
+    if tracker.has_lo && tracker.has_hi && tracker.μ_lo < tracker.μ_hi
+        μ_lo = tracker.μ_lo
+        μ_hi = tracker.μ_hi
+        err_lo = tracker.err_lo
+        err_hi = tracker.err_hi
+        μ_mid = 0.5 * (μ_lo + μ_hi)
+        denom = err_hi - err_lo
+        μ_sec = μ_mid
+        if isfinite(denom) && abs(denom) > eps(Float64)
+            μ_tmp = μ_hi - err_hi * (μ_hi - μ_lo) / denom
+            if μ_lo < μ_tmp < μ_hi
+                μ_sec = μ_tmp
+            end
+        end
+        μ_next = μ_mid + α * (μ_sec - μ_mid)
+        return clamp(μ_next, p.μ_min, p.μ_max), :bracketed_secant
+    end
+
+    μ_prop = NaN
+    mode = :step
+    if tracker.has_prev
+        denom = err - tracker.err_prev
+        if isfinite(denom) && abs(denom) > 1e-12
+            μ_try = μ - err * (μ - tracker.μ_prev) / denom
+            # 未成区间时，要求更新方向与误差符号一致，避免噪声导致反向跳步
+            if sign(μ_try - μ) == sign(err) || abs(μ_try - μ) < 1e-12
+                μ_prop = μ_try
+                mode = :secant
+            end
+        end
+    end
+    if !isfinite(μ_prop)
+        step_scale = max(α, 0.25)
+        μ_prop = μ + sign(err) * step_scale * p.μ_tune_step_max
+        mode = :step
+    end
+    δμ = μ_prop - μ
+    if mode == :secant
+        δμ *= α
+    end
+    δμ = clamp(δμ, -p.μ_tune_step_max, p.μ_tune_step_max)
+    μ_next = clamp(μ + δμ, p.μ_min, p.μ_max)
+    return μ_next, mode
+end
+
+function tune_chemical_potential!(cache::ComputeCache, p::ModelParameters, state::SimulationState, tracker::MuRootTracker)
+    old_μ = state.μ_eff
+    n_meas = electron_density_from_cache(cache, p)
+    err = p.target_n - n_meas
+    update_bracket!(tracker, old_μ, err)
+    new_μ, mode = propose_next_mu(tracker, p, old_μ, err)
+    state.μ_eff = new_μ
+
+    if new_μ != old_μ
+        init_static_H!(cache, p, state)
+        update_H_BdG!(cache, p, state)
+        diagonalize_H_BdG!(cache, p)
+    end
+
+    tracker.has_prev = true
+    tracker.μ_prev = old_μ
+    tracker.err_prev = err
+    δμ = new_μ - old_μ
+    bracketed = tracker.has_lo && tracker.has_hi && tracker.μ_lo < tracker.μ_hi
+    return old_μ, new_μ, n_meas, err, δμ, mode, bracketed
 end
 
 """
@@ -74,13 +182,18 @@ function run_simulation(p::ModelParameters, out_dir::String;
     println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
     
     tee_println("Starting Simulation...")
-    tee_println("System: $(p.Lx)x$(p.Ly), β=$(p.β), n_imp=$(p.n_imp), J=$(p.J)")
+    tee_println("System: $(p.Lx)x$(p.Ly), β=$(p.β), V=$(p.V), W=$(p.W), n_imp=$(p.n_imp)")
     tee_println("Config: Therm=$n_therm, Sweep=$n_measure, TransFreq=$measure_transport_freq, BinSize=$bin_size")
 
     # --- 2. 初始化 ---
     tee_println("Initializing State...")
     state = initialize_state(p)
     cache = initialize_cache(p)
+    if p.has_target_n
+        tee_println("Mode: target_n=$(p.target_n), μ_init=$(state.μ_eff), μ_range=[$(p.μ_min), $(p.μ_max)], gain=$(p.μ_tune_gain)")
+    else
+        tee_println("Mode: fixed_μ=$(state.μ_eff)")
+    end
     
     init_static_H!(cache, p, state)
     update_H_BdG!(cache, p, state)
@@ -101,14 +214,15 @@ function run_simulation(p::ModelParameters, out_dir::String;
 
     # --- 3. 热化阶段 (Adaptive Thermalization) ---
     Nt_current = Nt_therm_init
-    dt_current = calc_optimal_dt(p.β, p.J, p.mass, Nt_current)
+    dt_current = calc_optimal_dt(p.β, p.V, p.mass, Nt_current)
     
     tee_println("--- Thermalization Start ---")
     tee_println("Init: Nt=$Nt_current, dt=$(round(dt_current, digits=5))")
     
     # 用于计算接受率窗口
-    therm_window = 5 
+    acc_window = 5
     recent_acc = 0
+    μ_tracker = MuRootTracker()
     
     start_time = time()
     
@@ -117,8 +231,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
         if acc recent_acc += 1 end
         
         # 自适应调整逻辑
-        if i % therm_window == 0
-            rate = recent_acc / therm_window
+        if i % acc_window == 0
+            rate = recent_acc / acc_window
             recent_acc = 0 # 重置计数器
             
             old_Nt = Nt_current
@@ -131,19 +245,31 @@ function run_simulation(p::ModelParameters, out_dir::String;
             end
             
             if Nt_current != old_Nt
-                dt_current = calc_optimal_dt(p.β, p.J, p.mass, Nt_current)
+                dt_current = calc_optimal_dt(p.β, p.V, p.mass, Nt_current)
                 tee_println(@sprintf("Therm %d/%d. Rate=%.2f. Adjust Nt: %d -> %d, dt: %.4f", 
                                      i, n_therm, rate, old_Nt, Nt_current, dt_current))
             elseif i % 20 == 0
                 tee_println(@sprintf("Therm %d/%d. Rate=%.2f. Nt=%d (Stable)", i, n_therm, rate, Nt_current))
             end
         end
+
+        if p.has_target_n && (i % p.μ_tune_interval == 0)
+            old_μ, new_μ, n_meas, err, δμ, mode, bracketed = tune_chemical_potential!(cache, p, state, μ_tracker)
+            tee_println(@sprintf("Therm %d/%d. Tune μ[%s%s]: %.5f -> %.5f, n=%.6f (target=%.6f, err=%+.3e, dμ=%+.3e)",
+                                 i, n_therm, String(mode), bracketed ? ",bracket" : "",
+                                 old_μ, new_μ, n_meas, p.target_n, err, δμ))
+        end
     end
     
+    if p.has_target_n
+        n_final = electron_density_from_cache(cache, p)
+        tee_println(@sprintf("Therm target summary: μ=%.5f, n=%.6f, target=%.6f, err=%+.3e",
+                             state.μ_eff, n_final, p.target_n, p.target_n - n_final))
+    end
     tee_println("Thermalization Done. Time: $(round(time() - start_time, digits=2))s")
     
     # --- 4. 测量阶段 ---
-    dt_meas = calc_optimal_dt(p.β, p.J, p.mass, Nt_measure)
+    dt_meas = calc_optimal_dt(p.β, p.V, p.mass, Nt_measure)
     tee_println("--- Measurement Start ---")
     tee_println("Settings: Nt=$Nt_measure, dt=$(round(dt_meas, digits=5))")
     
@@ -247,7 +373,13 @@ function run_simulation(p::ModelParameters, out_dir::String;
         # 进度打印
         if i % 10 == 0
              rate = acc_total / i
-             tee_println(@sprintf("Meas %d/%d. Acc=%.2f. E=%.4f", i, n_measure, rate, obs.total_energy))
+             if p.has_target_n
+                 n_curr = 1.0 - obs.hole_conc
+                 tee_println(@sprintf("Meas %d/%d. Acc=%.2f. E=%.4f. μ=%.5f, n=%.6f",
+                                      i, n_measure, rate, obs.total_energy, state.μ_eff, n_curr))
+             else
+                 tee_println(@sprintf("Meas %d/%d. Acc=%.2f. E=%.4f", i, n_measure, rate, obs.total_energy))
+             end
         end
     end
     
