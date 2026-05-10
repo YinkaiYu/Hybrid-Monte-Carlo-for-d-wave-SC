@@ -60,6 +60,7 @@ end
 # Case 1: 固定 μ
 p_fixed = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass, η=η, Δω=Δω, ω_max=ω_max)
 out_dir_fixed = "data/test_fixed_mu_L$(Lx)_V$(V)_T$(T)_mu$(μ)"
+isdir(out_dir_fixed) && rm(out_dir_fixed; recursive=true, force=true)
 run_simulation(p_fixed, out_dir_fixed;
                n_therm=n_therm,
                n_measure=n_measure,
@@ -73,6 +74,7 @@ check_output(out_dir_fixed)
 p_twist = ModelParameters(4, 4, t, tp, μ, W, n_imp, 10.0, V, mass;
                           η=8.0 / 16.0, Δω=4.0 / 16.0, ω_max=3.0)
 out_dir_twist = "data/test_twist_enabled_L4"
+isdir(out_dir_twist) && rm(out_dir_twist; recursive=true, force=true)
 run_simulation(p_twist, out_dir_twist;
                n_therm=1,
                n_measure=1,
@@ -95,6 +97,7 @@ p_target = ModelParameters(Lx, Ly, t, tp, W, n_imp, β, V, mass;
                            μ_tune_gain=μ_gain, μ_tune_interval=μ_interval,
                            η=η, Δω=Δω, ω_max=ω_max)
 out_dir_target = "data/test_target_n_L$(Lx)_V$(V)_T$(T)_n$(target_n)"
+isdir(out_dir_target) && rm(out_dir_target; recursive=true, force=true)
 run_simulation(p_target, out_dir_target;
                n_therm=n_therm,
                n_measure=n_measure,
