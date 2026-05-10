@@ -54,7 +54,7 @@ end
                               j::Int,
                               h::ComplexF64)
     set_tbc_hermitian_pair!(H, i, j, h)
-    set_tbc_hermitian_pair!(H, i + N, j + N, -conj(h))
+    set_tbc_hermitian_pair!(H, i + N, j + N, -h)
     return nothing
 end
 
@@ -131,13 +131,13 @@ function build_tbc_H_BdG!(H::Matrix{ComplexF64},
         phx = tbc_phase(x, y, 1, 0, Lx, Ly, qx, qy)
         valx = state.Δ[i, 1] * phx
         H[i, jx + N] = valx
-        H[jx, i + N] = valx
+        H[jx, i + N] = state.Δ[i, 1] * conj(phx)
 
         jy = site_index_xy(x, y + 1, Lx, Ly)
         phy = tbc_phase(x, y, 0, 1, Lx, Ly, qx, qy)
         valy = state.Δ[i, 2] * phy
         H[i, jy + N] = valy
-        H[jy, i + N] = valy
+        H[jy, i + N] = state.Δ[i, 2] * conj(phy)
     end
 
     return nothing

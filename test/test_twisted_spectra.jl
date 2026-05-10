@@ -102,27 +102,61 @@ end
                    atol=1e-12, rtol=1e-12)
 end
 
+@testset "TBC boundary phase convention" begin
+    p, state, _ = setup_tbc_fixture(Lx=3, Ly=3)
+    dim = 2 * p.N
+    H = zeros(ComplexF64, dim, dim)
+    qx = 2π / 3
+    qy = 2π / 3
+
+    DwaveHMC.build_tbc_H_BdG!(H, p, state, qx, qy)
+    Hfull = Matrix(Hermitian(H, :U))
+
+    i_x = test_site_index_xy(p.Lx, 1, p.Lx, p.Ly)
+    j_x = test_site_index_xy(1, 1, p.Lx, p.Ly)
+    ph_x = cis(-qx)
+    @test Hfull[i_x, j_x] ≈ -p.t * ph_x
+    @test Hfull[i_x + p.N, j_x + p.N] ≈ p.t * ph_x
+
+    i_diag = test_site_index_xy(p.Lx, p.Ly, p.Lx, p.Ly)
+    j_diag = test_site_index_xy(1, 1, p.Lx, p.Ly)
+    ph_diag = cis(-(qx + qy))
+    @test Hfull[i_diag, j_diag] ≈ -p.tp * ph_diag
+    @test Hfull[i_diag + p.N, j_diag + p.N] ≈ p.tp * ph_diag
+
+    @test Hfull[i_x, j_x + p.N] ≈ state.Δ[i_x, 1] * ph_x
+    @test Hfull[j_x, i_x + p.N] ≈ state.Δ[i_x, 1] * conj(ph_x)
+
+    i_y = test_site_index_xy(1, p.Ly, p.Lx, p.Ly)
+    j_y = test_site_index_xy(1, 1, p.Lx, p.Ly)
+    ph_y = cis(-qy)
+    @test Hfull[i_y, j_y + p.N] ≈ state.Δ[i_y, 2] * ph_y
+    @test Hfull[j_y, i_y + p.N] ≈ state.Δ[i_y, 2] * conj(ph_y)
+end
+
 @testset "TBC sectors reproduce repeated supercell spectrum" begin
     p, state, _ = setup_tbc_fixture(Lx=3, Ly=3)
-    Ltw = 2
     dim_small = 2 * p.N
-    dim_super = 2 * p.N * Ltw^2
 
-    sector_vals = Float64[]
-    H_sector = zeros(ComplexF64, dim_small, dim_small)
-    for nx in 0:Ltw-1, ny in 0:Ltw-1
-        qx = 2π * nx / Ltw
-        qy = 2π * ny / Ltw
-        DwaveHMC.build_tbc_H_BdG!(H_sector, p, state, qx, qy)
-        append!(sector_vals, eigvals(Hermitian(H_sector, :U)))
+    for Ltw in (2, 3)
+        dim_super = 2 * p.N * Ltw^2
+
+        sector_vals = Float64[]
+        H_sector = zeros(ComplexF64, dim_small, dim_small)
+        for nx in 0:Ltw-1, ny in 0:Ltw-1
+            qx = 2π * nx / Ltw
+            qy = 2π * ny / Ltw
+            DwaveHMC.build_tbc_H_BdG!(H_sector, p, state, qx, qy)
+            append!(sector_vals, eigvals(Hermitian(H_sector, :U)))
+        end
+
+        H_super = zeros(ComplexF64, dim_super, dim_super)
+        build_repeated_supercell_H!(H_super, p, state, Ltw)
+        super_vals = eigvals(Hermitian(H_super, :U))
+
+        sort!(sector_vals)
+        sort!(super_vals)
+        @test length(sector_vals) == length(super_vals)
+        @test isapprox(sector_vals, super_vals; atol=1e-9, rtol=1e-9)
     end
-
-    H_super = zeros(ComplexF64, dim_super, dim_super)
-    build_repeated_supercell_H!(H_super, p, state, Ltw)
-    super_vals = eigvals(Hermitian(H_super, :U))
-
-    sort!(sector_vals)
-    sort!(super_vals)
-    @test length(sector_vals) == length(super_vals)
-    @test isapprox(sector_vals, super_vals; atol=1e-9, rtol=1e-9)
 end
