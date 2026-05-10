@@ -4,7 +4,7 @@ using DwaveHMC
 
 include(normpath(joinpath(@__DIR__, "..", "..", "scripts", "spectra_postprocess_utils.jl")))
 
-target_dir = @__DIR__
+target_dir = get(ENV, "DWAVEHMC_ANALYSIS_DIR", @__DIR__)
 
 const SPECTRA_OUTPUT_FILES = [
     "spectra_opt_cond.csv",

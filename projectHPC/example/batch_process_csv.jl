@@ -5,7 +5,7 @@ using Glob
 using DwaveHMC
 
 # ================= 设置区域 =================
-target_dir = @__DIR__
+target_dir = get(ENV, "DWAVEHMC_ANALYSIS_DIR", @__DIR__)
 output_filename = "summary_all.csv"
 # ===========================================
 

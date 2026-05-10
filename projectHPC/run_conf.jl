@@ -30,7 +30,19 @@ flush(stdout)
 # ---------------------------------------------------------
 # 2. 环境加载
 # ---------------------------------------------------------
-const PROJECT_ROOT = @__DIR__
+function find_project_root(start_dir::AbstractString)
+    dir = abspath(start_dir)
+    while true
+        if isfile(joinpath(dir, "Project.toml"))
+            return dir
+        end
+        parent = dirname(dir)
+        parent == dir && error("Could not find Project.toml above $start_dir")
+        dir = parent
+    end
+end
+
+const PROJECT_ROOT = get(ENV, "DWAVEHMC_PROJECT_ROOT", find_project_root(@__DIR__))
 @everywhere begin
     using Pkg
     Pkg.activate($PROJECT_ROOT) 
