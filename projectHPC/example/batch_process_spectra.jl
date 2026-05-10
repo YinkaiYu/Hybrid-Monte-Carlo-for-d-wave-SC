@@ -31,6 +31,9 @@ function process_single_config(jld_path)
             sum_dos_AN = copy(g1["dos_AN"])
             sum_ak = copy(g1["A_k0"])
             sum_akpath = haskey(g1, "A_kpath") ? copy(g1["A_kpath"]) : nothing
+            sum_dos_AN_patch = haskey(g1, "dos_AN_patch") ? copy(g1["dos_AN_patch"]) : nothing
+            patch_count = sum_dos_AN_patch === nothing ? 0 : 1
+            mixed_patch = false
             count = 1
             
             # 累加后续 bin
@@ -40,6 +43,19 @@ function process_single_config(jld_path)
                 sum_dos .+= g["dos"]
                 sum_dos_AN .+= g["dos_AN"]
                 sum_ak .+= g["A_k0"]
+                has_patch = haskey(g, "dos_AN_patch")
+                if has_patch
+                    patch_count += 1
+                end
+                if sum_dos_AN_patch !== nothing
+                    if has_patch
+                        sum_dos_AN_patch .+= g["dos_AN_patch"]
+                    else
+                        mixed_patch = true
+                    end
+                elseif has_patch
+                    mixed_patch = true
+                end
                 if sum_akpath !== nothing
                     if !haskey(g, "A_kpath")
                         return nothing
@@ -57,15 +73,27 @@ function process_single_config(jld_path)
             if haskey(file, "kpath_ky") meta["kpath_ky"] = file["kpath_ky"] end
             if haskey(file, "kpath_kx_idx") meta["kpath_kx_idx"] = file["kpath_kx_idx"] end
             if haskey(file, "kpath_ky_idx") meta["kpath_ky_idx"] = file["kpath_ky_idx"] end
+            meta["spectra_Ltw"] = haskey(file, "spectra_Ltw") ? Int(file["spectra_Ltw"]) : 1
+            meta["spectra_Lx_eff"] = haskey(file, "spectra_Lx_eff") ? Int(file["spectra_Lx_eff"]) : p.Lx
+            meta["spectra_Ly_eff"] = haskey(file, "spectra_Ly_eff") ? Int(file["spectra_Ly_eff"]) : p.Ly
+
+            dos_AN_patch = nothing
+            if mixed_patch
+                @warn "Mixed dos_AN_patch presence inside config; skipping patch for this config." file=jld_path patch_sweeps=patch_count sweep_count=count
+            elseif sum_dos_AN_patch !== nothing
+                dos_AN_patch = sum_dos_AN_patch ./ count
+            end
             
             # 计算平均
             res = (opt=sum_opt ./ count, dos=sum_dos ./ count, dos_AN=sum_dos_AN ./ count,
                    ak0=sum_ak ./ count,
                    akpath=sum_akpath === nothing ? nothing : (sum_akpath ./ count),
+                   dos_AN_patch=dos_AN_patch,
                    params=p, meta=meta)
             
             # 检查 NaN
-            if any(isnan, res.opt) || any(isnan, res.dos)
+            if any(isnan, res.opt) || any(isnan, res.dos) ||
+               (res.dos_AN_patch !== nothing && any(isnan, res.dos_AN_patch))
                 return nothing
             end
             
@@ -93,6 +121,23 @@ function calc_final_stats(list_of_means)
     return final_mean, sem
 end
 
+function compatible_grid(grid, values, label; source="")
+    if length(grid) == length(values)
+        return grid
+    end
+    @warn "$label grid size mismatch; using fallback range." source=source grid_length=length(grid) data_length=length(values)
+    return range(first(grid), stop=last(grid), length=length(values))
+end
+
+function resolve_ak_dims(final_ak, Lx_eff, Ly_eff; source="")
+    actual_dims = size(final_ak)
+    if actual_dims != (Lx_eff, Ly_eff)
+        @warn "A_k0 size differs from spectra metadata; using actual array size." source=source metadata=(Lx_eff, Ly_eff) actual=actual_dims
+        return actual_dims
+    end
+    return Lx_eff, Ly_eff
+end
+
 # --- 2. 处理单个 T 目录 ---
 function process_T_directory(dir_path)
     conf_dirs = glob("conf_*", dir_path)
@@ -103,6 +148,7 @@ function process_T_directory(dir_path)
     samples_opt = []
     samples_dos = []
     samples_dos_AN = []
+    samples_dos_AN_patch = []
     samples_ak = []
     samples_akpath = []
     last_params = nothing
@@ -117,6 +163,9 @@ function process_T_directory(dir_path)
             push!(samples_dos, res.dos)
             push!(samples_dos_AN, res.dos_AN)
             push!(samples_ak, res.ak0)
+            if res.dos_AN_patch !== nothing
+                push!(samples_dos_AN_patch, res.dos_AN_patch)
+            end
             if res.akpath !== nothing
                 push!(samples_akpath, res.akpath)
             end
@@ -136,6 +185,13 @@ function process_T_directory(dir_path)
     final_opt, err_opt = calc_final_stats(samples_opt)
     final_dos, err_dos = calc_final_stats(samples_dos)
     final_dos_AN, err_dos_AN = calc_final_stats(samples_dos_AN)
+    final_dos_AN_patch = nothing
+    err_dos_AN_patch = nothing
+    if length(samples_dos_AN_patch) == real_n
+        final_dos_AN_patch, err_dos_AN_patch = calc_final_stats(samples_dos_AN_patch)
+    elseif !isempty(samples_dos_AN_patch)
+        @warn "Mixed dos_AN_patch presence across configs; skipping patch output." dir=dir_path patch_configs=length(samples_dos_AN_patch) valid_configs=real_n
+    end
     final_ak, err_ak = calc_final_stats(samples_ak)
     final_akpath = nothing
     err_akpath = nothing
@@ -174,10 +230,25 @@ function process_T_directory(dir_path)
                     final_dos_AN[i], err_dos_AN[i])
         end
     end
+
+    if final_dos_AN_patch !== nothing && err_dos_AN_patch !== nothing
+        patch_grid = compatible_grid(dos_omega_grid, final_dos_AN_patch, "DOS_AN_patch"; source=dir_path)
+        open(joinpath(dir_path, "spectra_dos_AN_patch.csv"), "w") do io
+            println(io, "omega,DOS_AN_patch,Error")
+            for i in 1:length(final_dos_AN_patch)
+                @printf(io, "%.6f,%.6e,%.6e\n",
+                        patch_grid[i], final_dos_AN_patch[i], err_dos_AN_patch[i])
+            end
+        end
+    else
+        rm(joinpath(dir_path, "spectra_dos_AN_patch.csv"); force=true)
+    end
     
     open(joinpath(dir_path, "spectra_ak0.csv"), "w") do io
         println(io, "kx_idx,ky_idx,kx,ky,A_val,Error")
-        Lx, Ly = p.Lx, p.Ly
+        Lx_eff = Int(get(last_meta, "spectra_Lx_eff", p.Lx))
+        Ly_eff = Int(get(last_meta, "spectra_Ly_eff", p.Ly))
+        Lx, Ly = resolve_ak_dims(final_ak, Lx_eff, Ly_eff; source=dir_path)
         for x in 1:Lx
             for y in 1:Ly
                 kx = 2π * (x - 1) / Lx
@@ -218,15 +289,20 @@ function process_T_directory(dir_path)
     end
 end
 
-# --- 3. 主程序 ---
-println("Starting Robust T-scan Spectra Processing...")
+function main()
+    println("Starting Robust T-scan Spectra Processing...")
 
-T_dirs = glob("T_*", target_dir)
-# 数字排序
-sort!(T_dirs, by = d -> try parse(Float64, split(basename(d), "_")[2]) catch; 0.0 end)
+    T_dirs = glob("T_*", target_dir)
+    # 数字排序
+    sort!(T_dirs, by = d -> try parse(Float64, split(basename(d), "_")[2]) catch; 0.0 end)
 
-for t_dir in T_dirs
-    process_T_directory(t_dir)
+    for t_dir in T_dirs
+        process_T_directory(t_dir)
+    end
+
+    println("Done.")
 end
 
-println("Done.")
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end
