@@ -38,3 +38,9 @@ LogExpFunctions = "0.3.29"
 Plots = "1.41.2"
 SparseArrays = "1.11.0"
 Statistics = "1.11.1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

@@ -1,4 +1,3 @@
-"@stdlib" in LOAD_PATH || push!(LOAD_PATH, "@stdlib")
 using Test
 
 @testset "DwaveHMC default test suite" begin
