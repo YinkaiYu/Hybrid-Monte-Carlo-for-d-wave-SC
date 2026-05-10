@@ -166,3 +166,41 @@ end
         @test isapprox(sector_vals, super_vals; atol=1e-9, rtol=1e-9)
     end
 end
+
+@testset "Twisted spectra measurement" begin
+    p, state, cache = setup_tbc_fixture()
+
+    base = measure_transport_and_spectra(cache, p; reuse_buffers=false)
+    H_before = copy(cache.H_base)
+    E_before = copy(cache.E_n)
+    U_before = copy(cache.U)
+
+    tw1 = measure_twisted_spectra(cache, p, state;
+                                  Ltw=1,
+                                  antinode_patch_half_width=0.0,
+                                  reuse_buffers=false)
+
+    @test cache.H_base == H_before
+    @test cache.E_n == E_before
+    @test cache.U == U_before
+
+    @test size(tw1.A_k_ω0) == size(base.A_k_ω0)
+    @test size(tw1.A_kpath) == size(base.A_kpath)
+    @test isapprox(tw1.dos, base.dos; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.dos_AN, base.dos_AN; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.A_k_ω0, base.A_k_ω0; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.A_kpath, base.A_kpath; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.dos_AN_patch, tw1.dos_AN; atol=1e-8, rtol=1e-8)
+
+    tw2 = measure_twisted_spectra(cache, p, state; Ltw=2, reuse_buffers=false)
+    @test size(tw2.A_k_ω0) == (p.Lx * 2, p.Ly * 2)
+    @test size(tw2.A_kpath, 1) == fld(p.Ly * 2, 2) + 1
+    @test size(tw2.A_kpath, 2) == length(cache.dos_omega_grid)
+    @test length(tw2.kx_grid) == p.Lx * 2
+    @test length(tw2.ky_grid) == p.Ly * 2
+    @test all(isfinite, tw2.dos)
+    @test all(isfinite, tw2.dos_AN)
+    @test all(isfinite, tw2.dos_AN_patch)
+    @test all(isfinite, tw2.A_k_ω0)
+    @test all(isfinite, tw2.A_kpath)
+end
