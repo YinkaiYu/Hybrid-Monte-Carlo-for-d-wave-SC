@@ -201,6 +201,37 @@ $$ A(\mathbf{k}, \omega) = \sum_{n=1}^{2N} |\tilde{u}_{n}(\mathbf{k})|^2 \delta(
 $$ \tilde{u}_{n}(\mathbf{k}) = \frac{1}{\sqrt{N}} \sum_{j=1}^{N} e^{-i \mathbf{k} \cdot \mathbf{r}_j} u_{j,n} $$
 同样，也可以输出完整的谱权重 $W_{n}(\mathbf{k}) = |\tilde{u}_{n}(\mathbf{k})|^2$ 数组。
 
+#### Twisted-boundary spectra
+
+谱函数的 twisted-boundary-condition (TBC) 测量只作为热化后构型的谱函数后处理使用，不参与 HMC
+采样、力、接受率、输运、光电导或超流刚度。默认 `spectra_Ltw=1` 且
+`use_twisted_spectra=false`，因此旧的谱函数路线、输出字段和数组形状保持不变。
+
+启用
+```julia
+run_simulation(...; spectra_Ltw=Ltw, use_twisted_spectra=true)
+```
+后，程序在每个需要重型测量的构型上对 $L_{\mathrm{tw}}^2$ 个 twist sector 分别构造并对角化原始小晶胞 BdG
+哈密顿量，再把小晶胞 FFT index 与 twist index 合并成有效动量网格：
+
+$$
+L_x^{\mathrm{eff}} = L_x L_{\mathrm{tw}},\qquad
+L_y^{\mathrm{eff}} = L_y L_{\mathrm{tw}}.
+$$
+
+TBC 谱函数要求有效尺寸 $L_x^{\mathrm{eff}}$ 和 $L_y^{\mathrm{eff}}$ 为偶数，以便精确表示
+$(\pi,0)$、$(0,\pi)$ 以及 $k_x=\pi$ 的路径。若启用 TBC 后有效尺寸为奇数，程序会在写出谱文件前报错；关闭
+TBC 时仍沿用原来的最近格点路径约定。
+
+`dos_AN` 保持旧定义，即精确 antinode 点
+$$
+A_{\mathrm{AN}}(\omega)=\frac12\left[A((\pi,0),\omega)+A((0,\pi),\omega)\right].
+$$
+TBC 额外输出 `dos_AN_patch`，它在有效动量网格上对两个 antinode 附近的 patch 做平均，patch 半宽由
+`antinode_patch_half_width` 控制，默认是 $\pi/\max(L_x,L_y)$。TBC 输出文件还会记录
+`spectra_Ltw`、`spectra_Lx_eff`、`spectra_Ly_eff`、`kx_grid`、`ky_grid` 和有效
+`kpath_kx/kpath_ky` 元数据；后处理脚本会优先使用这些元数据，并兼容旧文件中缺少 TBC 字段的情况。
+
 ### 赝能隙
 
 为了看 pseudogap，我们关注 antinode 处的谱函数 
