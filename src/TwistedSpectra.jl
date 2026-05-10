@@ -4,16 +4,21 @@ using FFTW
 struct TwistedSpectraResult
     dos_ω_grid::Vector{Float64}
     dos::Vector{Float64}
-    dos_AN::Vector{Float64}
-    dos_AN_patch::Vector{Float64}
+    dos_M::Vector{Float64}
+    dos_M_patch::Vector{Float64}
     A_k_ω0::Matrix{Float64}
-    A_kpath::Matrix{Float64}
+    A_MX_path::Matrix{Float64}
+    A_XG_path::Matrix{Float64}
     kx_grid::Vector{Float64}
     ky_grid::Vector{Float64}
-    kpath_kx::Float64
-    kpath_ky::Vector{Float64}
+    mx_path_kx::Float64
+    mx_path_ky::Vector{Float64}
+    xg_path_kx::Vector{Float64}
+    xg_path_ky::Vector{Float64}
     Ltw::Int
-    antinode_patch_half_width::Float64
+    m_point_patch_half_width::Float64
+    spectra_eta::Float64
+    spectra_delta_omega::Float64
 end
 
 @inline lorentzian_spectra(x::Float64, η::Float64) =
@@ -83,9 +88,9 @@ end
     return min(d, 2π - d)
 end
 
-function antinode_patch_mask(kx_grid::Vector{Float64},
-                             ky_grid::Vector{Float64},
-                             half_width::Float64)
+function m_point_patch_mask(kx_grid::Vector{Float64},
+                            ky_grid::Vector{Float64},
+                            half_width::Float64)
     mask = falses(length(kx_grid), length(ky_grid))
     count = 0
     @inbounds for ix in eachindex(kx_grid), iy in eachindex(ky_grid)
@@ -158,7 +163,7 @@ function exact_effective_point(L_eff::Int, fraction::Float64, name::String)
     return mod(I, L_eff)
 end
 
-function tbc_kpath_metadata(Lx::Int, Ly::Int, Ltw::Int)
+function tbc_mx_path_metadata(Lx::Int, Ly::Int, Ltw::Int)
     Lx_eff = Lx * Ltw
     Ly_eff = Ly * Ltw
     Ix_pi = exact_effective_point(Lx_eff, 0.5, "kx=π")
@@ -173,8 +178,31 @@ function tbc_kpath_metadata(Lx::Int, Ly::Int, Ltw::Int)
     return Ix_pi, kx, ky
 end
 
+function tbc_xg_path_metadata(Lx::Int, Ly::Int, Ltw::Int)
+    Lx_eff = Lx * Ltw
+    Ly_eff = Ly * Ltw
+    if isodd(Lx_eff) || isodd(Ly_eff)
+        error("TBC spectra require even effective dimensions to represent exact X-Gamma path")
+    end
+
+    path_len = fld(min(Lx_eff, Ly_eff), 2) + 1
+    kx = Vector{Float64}(undef, path_len)
+    ky = Vector{Float64}(undef, path_len)
+    @inbounds for idx in 1:path_len
+        I = idx - 1
+        kx[idx] = 2π * I / Lx_eff
+        ky[idx] = 2π * I / Ly_eff
+    end
+    return kx, ky
+end
+
+function spectra_dos_grid(p::ModelParameters, spectra_delta_omega::Float64)
+    spectra_delta_omega > 0 || error("spectra_delta_omega must be positive")
+    return collect(-p.ω_max:spectra_delta_omega:p.ω_max)
+end
+
 """
-    measure_twisted_spectra(cache, p, state; Ltw=2, antinode_patch_half_width=π / max(p.Lx, p.Ly), reuse_buffers=false)
+    measure_twisted_spectra(cache, p, state; Ltw=2, m_point_patch_half_width=π / max(p.Lx, p.Ly), reuse_buffers=false)
 
 Measure DOS and spectral weights on the effective `Ltw`-refined momentum grid
 by summing spectra twisted-boundary-condition sectors.
@@ -183,10 +211,13 @@ function measure_twisted_spectra(cache::ComputeCache,
                                  p::ModelParameters,
                                  state::SimulationState;
                                  Ltw::Int=2,
-                                 antinode_patch_half_width::Float64=π / max(p.Lx, p.Ly),
+                                 m_point_patch_half_width::Float64=π / max(p.Lx, p.Ly),
+                                 spectra_eta::Float64=p.η,
+                                 spectra_delta_omega::Float64=p.Δω,
                                  reuse_buffers::Bool=false)
     Ltw <= 0 && error("Ltw must be positive")
-    antinode_patch_half_width < 0 && error("antinode_patch_half_width must be nonnegative")
+    m_point_patch_half_width < 0 && error("m_point_patch_half_width must be nonnegative")
+    spectra_eta > 0 || error("spectra_eta must be positive")
 
     N = p.N
     dim = 2 * N
@@ -195,24 +226,26 @@ function measure_twisted_spectra(cache::ComputeCache,
     Lx_eff = Lx * Ltw
     Ly_eff = Ly * Ltw
     if isodd(Lx_eff) || isodd(Ly_eff)
-        error("TBC spectra require even effective dimensions to represent exact antinodes and kx=π path")
+        error("TBC spectra require even effective dimensions to represent exact M points and kx=π path")
     end
 
-    dos_ω_grid = reuse_buffers ? cache.dos_omega_grid : copy(cache.dos_omega_grid)
+    dos_ω_grid = spectra_dos_grid(p, spectra_delta_omega)
     nω = length(dos_ω_grid)
     dos_vals = zeros(Float64, nω)
-    dos_AN_vals = zeros(Float64, nω)
-    dos_AN_patch_vals = zeros(Float64, nω)
+    dos_M_vals = zeros(Float64, nω)
+    dos_M_patch_vals = zeros(Float64, nω)
     A_k0 = zeros(Float64, Lx_eff, Ly_eff)
-    _, kpath_kx, kpath_ky = tbc_kpath_metadata(Lx, Ly, Ltw)
-    A_kpath = zeros(Float64, length(kpath_ky), nω)
+    _, mx_path_kx, mx_path_ky = tbc_mx_path_metadata(Lx, Ly, Ltw)
+    xg_path_kx, xg_path_ky = tbc_xg_path_metadata(Lx, Ly, Ltw)
+    A_MX_path = zeros(Float64, length(mx_path_ky), nω)
+    A_XG_path = zeros(Float64, length(xg_path_kx), nω)
     lor_cache = zeros(Float64, nω)
 
     kx_grid = effective_k_grid(Lx, Ltw)
     ky_grid = effective_k_grid(Ly, Ltw)
-    patch_mask, patch_count = antinode_patch_mask(kx_grid, ky_grid,
-                                                  antinode_patch_half_width)
-    patch_count == 0 && error("Antinodal patch contains no effective momentum points")
+    patch_mask, patch_count = m_point_patch_mask(kx_grid, ky_grid,
+                                                 m_point_patch_half_width)
+    patch_count == 0 && error("M-point patch contains no effective momentum points")
 
     Ix_pi = exact_effective_point(Lx_eff, 0.5, "kx=π")
     Iy_pi = exact_effective_point(Ly_eff, 0.5, "ky=π")
@@ -223,6 +256,16 @@ function measure_twisted_spectra(cache::ComputeCache,
     ny_zero, my_zero = effective_index_to_twist_fft(Iy_zero, Ly, Ltw)
     nx_zero, mx_zero = effective_index_to_twist_fft(Ix_zero, Lx, Ltw)
     ny_pi, my_pi = effective_index_to_twist_fft(Iy_pi, Ly, Ltw)
+
+    xg_nx = Vector{Int}(undef, length(xg_path_kx))
+    xg_mx = Vector{Int}(undef, length(xg_path_kx))
+    xg_ny = Vector{Int}(undef, length(xg_path_kx))
+    xg_my = Vector{Int}(undef, length(xg_path_kx))
+    @inbounds for path_idx in eachindex(xg_path_kx)
+        I = path_idx - 1
+        xg_nx[path_idx], xg_mx[path_idx] = effective_index_to_twist_fft(I, Lx, Ltw)
+        xg_ny[path_idx], xg_my[path_idx] = effective_index_to_twist_fft(I, Ly, Ltw)
+    end
 
     Htw = zeros(ComplexF64, dim, dim)
     Uwork = similar(Htw)
@@ -247,7 +290,7 @@ function measure_twisted_spectra(cache::ComputeCache,
             end
 
             for iw in eachindex(dos_ω_grid)
-                lor_cache[iw] = lorentzian_spectra(dos_ω_grid[iw] - En, p.η)
+                lor_cache[iw] = lorentzian_spectra(dos_ω_grid[iw] - En, spectra_eta)
                 dos_vals[iw] += w_n * lor_cache[iw]
             end
 
@@ -267,12 +310,12 @@ function measure_twisted_spectra(cache::ComputeCache,
             end
             if has_pi_0_sector || has_0_pi_sector
                 for iw in eachindex(dos_ω_grid)
-                    dos_AN_vals[iw] += exact_weight * lor_cache[iw]
+                    dos_M_vals[iw] += exact_weight * lor_cache[iw]
                 end
             end
 
             patch_weight = 0.0
-            weight_at_zero = lorentzian_spectra(-En, p.η)
+            weight_at_zero = lorentzian_spectra(-En, spectra_eta)
             for my in 0:Ly-1, mx in 0:Lx-1
                 Ix = twist_fft_to_effective_index(mx, nx, Lx, Ltw)
                 Iy = twist_fft_to_effective_index(my, ny, Ly, Ltw)
@@ -288,7 +331,7 @@ function measure_twisted_spectra(cache::ComputeCache,
             end
             patch_weight /= patch_count
             for iw in eachindex(dos_ω_grid)
-                dos_AN_patch_vals[iw] += patch_weight * lor_cache[iw]
+                dos_M_patch_vals[iw] += patch_weight * lor_cache[iw]
             end
 
             if nx == nx_pi
@@ -298,8 +341,17 @@ function measure_twisted_spectra(cache::ComputeCache,
                         wk = abs2(cache.u_k_cache[mx_pi + 1, my + 1]) / N
                         path_idx = Iy + 1
                         for iw in eachindex(dos_ω_grid)
-                            A_kpath[path_idx, iw] += wk * lor_cache[iw]
+                            A_MX_path[path_idx, iw] += wk * lor_cache[iw]
                         end
+                    end
+                end
+            end
+
+            for path_idx in eachindex(xg_path_kx)
+                if nx == xg_nx[path_idx] && ny == xg_ny[path_idx]
+                    wk = abs2(cache.u_k_cache[xg_mx[path_idx] + 1, xg_my[path_idx] + 1]) / N
+                    for iw in eachindex(dos_ω_grid)
+                        A_XG_path[path_idx, iw] += wk * lor_cache[iw]
                     end
                 end
             end
@@ -312,15 +364,20 @@ function measure_twisted_spectra(cache::ComputeCache,
     return TwistedSpectraResult(
         dos_ω_grid,
         reuse_buffers ? dos_vals : copy(dos_vals),
-        reuse_buffers ? dos_AN_vals : copy(dos_AN_vals),
-        reuse_buffers ? dos_AN_patch_vals : copy(dos_AN_patch_vals),
+        reuse_buffers ? dos_M_vals : copy(dos_M_vals),
+        reuse_buffers ? dos_M_patch_vals : copy(dos_M_patch_vals),
         reuse_buffers ? A_k0 : copy(A_k0),
-        reuse_buffers ? A_kpath : copy(A_kpath),
+        reuse_buffers ? A_MX_path : copy(A_MX_path),
+        reuse_buffers ? A_XG_path : copy(A_XG_path),
         kx_grid,
         ky_grid,
-        kpath_kx,
-        kpath_ky,
+        mx_path_kx,
+        mx_path_ky,
+        xg_path_kx,
+        xg_path_ky,
         Ltw,
-        antinode_patch_half_width,
+        m_point_patch_half_width,
+        spectra_eta,
+        spectra_delta_omega,
     )
 end

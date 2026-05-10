@@ -131,7 +131,9 @@ end
                    bin_size::Int=5,
                    spectra_Ltw::Int=1,
                    use_twisted_spectra::Bool=spectra_Ltw > 1,
-                   antinode_patch_half_width::Float64=π / max(p.Lx, p.Ly),
+                   m_point_patch_half_width::Float64=π / max(p.Lx, p.Ly),
+                   spectra_eta=nothing,
+                   spectra_delta_omega=nothing,
                    measure_twist::Bool=false,
                    twist_Ax::Float64=1e-3,
                    twist_qy::Float64=2π/p.Ly)
@@ -146,7 +148,9 @@ end
 - `bin_size`: 谱学数据分箱大小。即累积 `bin_size` 次测量后，求平均并存入 JLD2 一次。
 - `spectra_Ltw`: 谱函数动量网格的 twist 细分倍数；默认 `1`
 - `use_twisted_spectra`: 是否用 TBC 谱函数替代默认谱函数；默认在 `spectra_Ltw > 1` 时开启
-- `antinode_patch_half_width`: TBC 反节点 patch 半宽；仅在 `use_twisted_spectra=true` 时写入和使用
+- `m_point_patch_half_width`: TBC M 点 patch 半宽；仅在 `use_twisted_spectra=true` 时写入和使用
+- `spectra_eta`: TBC 谱函数展宽；默认 `p.η / spectra_Ltw^2`
+- `spectra_delta_omega`: TBC 谱函数频率步长；默认 `p.Δω / spectra_Ltw^2`
 - `measure_twist`: 是否额外计算 twist benchmark；默认关闭，避免额外对角化
 - `twist_Ax`: twist 有限差分步长
 - `twist_qy`: 横向调制 twist 的动量，默认 `2π/Ly`
@@ -160,7 +164,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
                         bin_size::Int=5,
                         spectra_Ltw::Int=1,
                         use_twisted_spectra::Bool=spectra_Ltw > 1,
-                        antinode_patch_half_width::Float64=π / max(p.Lx, p.Ly),
+                        m_point_patch_half_width::Float64=π / max(p.Lx, p.Ly),
+                        spectra_eta::Union{Nothing,Real}=nothing,
+                        spectra_delta_omega::Union{Nothing,Real}=nothing,
                         measure_twist::Bool=false,
                         twist_Ax::Float64=1.0e-3,
                         twist_qy::Float64=2π / p.Ly,
@@ -168,7 +174,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     
     # --- 1. 环境准备 ---
     spectra_Ltw > 0 || error("spectra_Ltw must be positive")
-    antinode_patch_half_width >= 0 || error("antinode_patch_half_width must be nonnegative")
+    m_point_patch_half_width >= 0 || error("m_point_patch_half_width must be nonnegative")
 
     actual_spectra_Ltw = use_twisted_spectra ? spectra_Ltw : 1
     spectra_Lx_eff = p.Lx * actual_spectra_Ltw
@@ -176,6 +182,14 @@ function run_simulation(p::ModelParameters, out_dir::String;
     if use_twisted_spectra && (isodd(spectra_Lx_eff) || isodd(spectra_Ly_eff))
         error("TBC spectra require even effective dimensions")
     end
+    actual_spectra_eta = use_twisted_spectra ?
+                         Float64(spectra_eta === nothing ? p.η / actual_spectra_Ltw^2 : spectra_eta) :
+                         p.η
+    actual_spectra_delta_omega = use_twisted_spectra ?
+                                 Float64(spectra_delta_omega === nothing ? p.Δω / actual_spectra_Ltw^2 : spectra_delta_omega) :
+                                 p.Δω
+    actual_spectra_eta > 0 || error("spectra_eta must be positive")
+    actual_spectra_delta_omega > 0 || error("spectra_delta_omega must be positive")
 
     if !isdir(out_dir)
         mkpath(out_dir)
@@ -218,7 +232,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     tee_println("Config: Therm=$n_therm, Sweep=$n_measure, TransFreq=$measure_transport_freq, BinSize=$bin_size")
     tee_println("Spectra: use_twisted_spectra=$use_twisted_spectra, Ltw=$actual_spectra_Ltw, effective=$(spectra_Lx_eff)x$(spectra_Ly_eff)")
     if use_twisted_spectra
-        tee_println("Spectra TBC: antinode_patch_half_width=$antinode_patch_half_width")
+        tee_println("Spectra TBC: m_point_patch_half_width=$m_point_patch_half_width, spectra_eta=$actual_spectra_eta, spectra_delta_omega=$actual_spectra_delta_omega")
     end
 
     # --- 2. 初始化 ---
@@ -237,9 +251,12 @@ function run_simulation(p::ModelParameters, out_dir::String;
     
     # 初始化 JLD2 文件 (写入参数信息)
     omega_grid = cache.omega_grid
-    dos_omega_grid = cache.dos_omega_grid
+    dos_omega_grid = use_twisted_spectra ?
+                     spectra_dos_grid(p, actual_spectra_delta_omega) :
+                     cache.dos_omega_grid
     if use_twisted_spectra
-        _, kpath_kx, kpath_ky = tbc_kpath_metadata(p.Lx, p.Ly, actual_spectra_Ltw)
+        Ix_pi, mx_path_kx, mx_path_ky = tbc_mx_path_metadata(p.Lx, p.Ly, actual_spectra_Ltw)
+        xg_path_kx, xg_path_ky = tbc_xg_path_metadata(p.Lx, p.Ly, actual_spectra_Ltw)
         kx_grid = effective_k_grid(p.Lx, actual_spectra_Ltw)
         ky_grid = effective_k_grid(p.Ly, actual_spectra_Ltw)
         jldsave(spectra_jld_path; params=p,
@@ -247,26 +264,41 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
+                spectra_eta=actual_spectra_eta,
+                spectra_delta_omega=actual_spectra_delta_omega,
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
-                kpath_kx=kpath_kx,
-                kpath_ky=kpath_ky,
+                mx_path_kx=mx_path_kx,
+                mx_path_ky=mx_path_ky,
+                mx_path_kx_idx=Ix_pi + 1,
+                mx_path_ky_idx=collect(1:length(mx_path_ky)),
+                xg_path_kx=xg_path_kx,
+                xg_path_ky=xg_path_ky,
+                xg_path_kx_idx=collect(1:length(xg_path_kx)),
+                xg_path_ky_idx=collect(1:length(xg_path_ky)),
                 kx_grid=kx_grid,
                 ky_grid=ky_grid,
-                antinode_patch_half_width=antinode_patch_half_width)
+                m_point_patch_half_width=m_point_patch_half_width)
     else
-        kx_idx, ky_indices, kx_val, ky_vals = antinode_kpath(p)
+        mx_kx_idx, mx_ky_indices, mx_kx_val, mx_ky_vals = mx_kpath(p)
+        xg_kx_indices, xg_ky_indices, xg_kx_vals, xg_ky_vals = xg_kpath(p)
         jldsave(spectra_jld_path; params=p,
                 use_twisted_spectra=use_twisted_spectra,
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
+                spectra_eta=actual_spectra_eta,
+                spectra_delta_omega=actual_spectra_delta_omega,
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
-                kpath_kx=kx_val,
-                kpath_ky=ky_vals,
-                kpath_kx_idx=kx_idx,
-                kpath_ky_idx=ky_indices)
+                mx_path_kx=mx_kx_val,
+                mx_path_ky=mx_ky_vals,
+                mx_path_kx_idx=mx_kx_idx,
+                mx_path_ky_idx=mx_ky_indices,
+                xg_path_kx=xg_kx_vals,
+                xg_path_ky=xg_ky_vals,
+                xg_path_kx_idx=xg_kx_indices,
+                xg_path_ky_idx=xg_ky_indices)
     end
     jldsave(pair_scatter_jld_path; params=p)
 
@@ -340,10 +372,11 @@ function run_simulation(p::ModelParameters, out_dir::String;
     # 这里采用 lazy initialization (第一次测量时分配内存)
     accum_opt_cond = Vector{Float64}()
     accum_dos = Vector{Float64}()
-    accum_dos_AN = Vector{Float64}()
-    accum_dos_AN_patch = nothing
+    accum_dos_M = Vector{Float64}()
+    accum_dos_M_patch = nothing
     accum_Ak0 = Matrix{Float64}(undef, 0, 0)
-    accum_Akpath = Matrix{Float64}(undef, 0, 0)
+    accum_AMXpath = Matrix{Float64}(undef, 0, 0)
+    accum_AXGpath = Matrix{Float64}(undef, 0, 0)
     
     for i in 1:n_measure
         # 1. HMC 演化
@@ -377,7 +410,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 transport_res = measure_transport_only(cache, p; reuse_buffers=true)
                 twisted_res = measure_twisted_spectra(cache, p, state;
                                                       Ltw=actual_spectra_Ltw,
-                                                      antinode_patch_half_width=antinode_patch_half_width,
+                                                      m_point_patch_half_width=m_point_patch_half_width,
+                                                      spectra_eta=actual_spectra_eta,
+                                                      spectra_delta_omega=actual_spectra_delta_omega,
                                                       reuse_buffers=false)
                 spec_res = SpectrumResult(transport_res.superfluid_stiffness,
                                           transport_res.dc_conductivity,
@@ -385,13 +420,14 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                           transport_res.optical_conductivity,
                                           twisted_res.dos_ω_grid,
                                           twisted_res.dos,
-                                          twisted_res.dos_AN,
+                                          twisted_res.dos_M,
                                           twisted_res.A_k_ω0,
-                                          twisted_res.A_kpath)
-                spec_dos_AN_patch = twisted_res.dos_AN_patch
+                                          twisted_res.A_MX_path,
+                                          twisted_res.A_XG_path)
+                spec_dos_M_patch = twisted_res.dos_M_patch
             else
                 spec_res = measure_transport_and_spectra(cache, p; reuse_buffers=true)
-                spec_dos_AN_patch = nothing
+                spec_dos_M_patch = nothing
             end
             
             # A. 写入 Transport CSV (Scalars)
@@ -420,21 +456,23 @@ function run_simulation(p::ModelParameters, out_dir::String;
             if bin_count == 0
                 accum_opt_cond = copy(spec_res.optical_conductivity)
                 accum_dos = copy(spec_res.dos)
-                accum_dos_AN = copy(spec_res.dos_AN)
-                accum_dos_AN_patch = spec_dos_AN_patch === nothing ? nothing : copy(spec_dos_AN_patch)
+                accum_dos_M = copy(spec_res.dos_M)
+                accum_dos_M_patch = spec_dos_M_patch === nothing ? nothing : copy(spec_dos_M_patch)
                 accum_Ak0 = copy(spec_res.A_k_ω0)
-                accum_Akpath = copy(spec_res.A_kpath)
+                accum_AMXpath = copy(spec_res.A_MX_path)
+                accum_AXGpath = copy(spec_res.A_XG_path)
                 bin_count = 1
             else
                 accum_opt_cond .+= spec_res.optical_conductivity
                 accum_dos .+= spec_res.dos
-                accum_dos_AN .+= spec_res.dos_AN
-                if spec_dos_AN_patch !== nothing
-                    accum_dos_AN_patch === nothing && error("dos_AN_patch accumulator missing for TBC spectra")
-                    accum_dos_AN_patch .+= spec_dos_AN_patch
+                accum_dos_M .+= spec_res.dos_M
+                if spec_dos_M_patch !== nothing
+                    accum_dos_M_patch === nothing && error("dos_M_patch accumulator missing for TBC spectra")
+                    accum_dos_M_patch .+= spec_dos_M_patch
                 end
                 accum_Ak0 .+= spec_res.A_k_ω0
-                accum_Akpath .+= spec_res.A_kpath
+                accum_AMXpath .+= spec_res.A_MX_path
+                accum_AXGpath .+= spec_res.A_XG_path
                 bin_count += 1
             end
             
@@ -443,12 +481,13 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 # 求平均
                 accum_opt_cond ./= bin_count
                 accum_dos ./= bin_count
-                accum_dos_AN ./= bin_count
-                if accum_dos_AN_patch !== nothing
-                    accum_dos_AN_patch ./= bin_count
+                accum_dos_M ./= bin_count
+                if accum_dos_M_patch !== nothing
+                    accum_dos_M_patch ./= bin_count
                 end
                 accum_Ak0 ./= bin_count
-                accum_Akpath ./= bin_count
+                accum_AMXpath ./= bin_count
+                accum_AXGpath ./= bin_count
                 
                 # JLD2 追加写入
                 # 使用 string key 来区分不同的 bin，例如 "bin_100", "bin_200" 表示到第几步的 bin
@@ -458,12 +497,13 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     g = JLD2.Group(file, group_name)
                     g["opt_cond"] = accum_opt_cond
                     g["dos"] = accum_dos
-                    g["dos_AN"] = accum_dos_AN
-                    if accum_dos_AN_patch !== nothing
-                        g["dos_AN_patch"] = accum_dos_AN_patch
+                    g["dos_M"] = accum_dos_M
+                    if accum_dos_M_patch !== nothing
+                        g["dos_M_patch"] = accum_dos_M_patch
                     end
                     g["A_k0"] = accum_Ak0
-                    g["A_kpath"] = accum_Akpath
+                    g["A_MX_path"] = accum_AMXpath
+                    g["A_XG_path"] = accum_AXGpath
                     g["count"] = bin_count # 记录这个 bin 包含了多少个样本
                 end
                 

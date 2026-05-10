@@ -1,167 +1,74 @@
 using JLD2
-using Statistics
-using DelimitedFiles
-using Printf
-using DwaveHMC # 加载你的包以识别 ModelParameters 类型
+using DwaveHMC
 
-# ==========================================
-# 设置
-# ==========================================
-# 这里填写你刚才运行的数据目录
+include(joinpath(@__DIR__, "spectra_postprocess_utils.jl"))
+
 target_dir = "data/test_spectra_L24_J0.8_W1.0_imp0.0_T0.001_mu-1.4"
 
-# ==========================================
-# 辅助函数：计算 Mean 和 SEM
-# ==========================================
-function calc_stats(data_list)
-    # data_list 是一个 Vector{Vector} 或 Vector{Matrix}
-    n_samples = length(data_list)
-    if n_samples == 0
-        return nothing, nothing
-    end
-
-    raw_shape = size(data_list[1])
-    sum_val = zeros(Float64, raw_shape)
-    sum_sq = zeros(Float64, raw_shape)
-
-    for d in data_list
-        sum_val .+= d
-        sum_sq .+= d .^ 2
-    end
-
-    mean_val = sum_val ./ n_samples
-    var_val = (sum_sq ./ n_samples) .- (mean_val .^ 2)
-    var_val = max.(var_val, 0.0)
-    sem_val = sqrt.(var_val ./ n_samples)
-
-    return mean_val, sem_val
+function read_required_metadata(file)
+    return (
+        omega_grid=collect(file["omega_grid"]),
+        dos_omega_grid=collect(file["dos_omega_grid"]),
+        spectra_Ltw=Int(file["spectra_Ltw"]),
+        spectra_Lx_eff=Int(file["spectra_Lx_eff"]),
+        spectra_Ly_eff=Int(file["spectra_Ly_eff"]),
+        mx_path_kx=Float64(file["mx_path_kx"]),
+        mx_path_ky=collect(file["mx_path_ky"]),
+        mx_path_kx_idx=Int(file["mx_path_kx_idx"]),
+        mx_path_ky_idx=collect(file["mx_path_ky_idx"]),
+        xg_path_kx=collect(file["xg_path_kx"]),
+        xg_path_ky=collect(file["xg_path_ky"]),
+        xg_path_kx_idx=collect(file["xg_path_kx_idx"]),
+        xg_path_ky_idx=collect(file["xg_path_ky_idx"]),
+    )
 end
 
-function read_spectra_metadata(file, params)
-    dos_omega_grid = haskey(file, "dos_omega_grid") ? file["dos_omega_grid"] :
-                     collect(-params.ω_max:params.Δω:params.ω_max)
-    spectra_Ltw = haskey(file, "spectra_Ltw") ? Int(file["spectra_Ltw"]) : 1
-    spectra_Lx_eff = haskey(file, "spectra_Lx_eff") ? Int(file["spectra_Lx_eff"]) : params.Lx
-    spectra_Ly_eff = haskey(file, "spectra_Ly_eff") ? Int(file["spectra_Ly_eff"]) : params.Ly
-
-    return collect(dos_omega_grid), spectra_Ltw, spectra_Lx_eff, spectra_Ly_eff
-end
-
-function read_omega_grid(file, params)
-    return haskey(file, "omega_grid") ? collect(file["omega_grid"]) :
-           collect(params.ω_min:params.Δω:params.ω_max)
-end
-
-function compatible_grid(grid, values, label; source="")
-    if length(grid) == length(values)
-        return grid
-    end
-
-    @warn "$label grid size mismatch; using index grid." source=source grid_length=length(grid) data_length=length(values)
-    return collect(1:length(values))
-end
-
-function resolve_ak_dims(mean_ak, Lx_eff, Ly_eff; source="")
-    actual_dims = size(mean_ak)
-    if actual_dims != (Lx_eff, Ly_eff)
-        @warn "A_k0 size differs from spectra metadata; using actual array size." source=source metadata=(Lx_eff, Ly_eff) actual=actual_dims
-        return actual_dims
-    end
-    return Lx_eff, Ly_eff
-end
-
-function write_series_csv(path, header, grid, mean_values, err_values)
-    open(path, "w") do io
-        println(io, header)
-        for i in eachindex(mean_values)
-            @printf(io, "%.6f,%.6f,%.6f\n", grid[i], mean_values[i], err_values[i])
-        end
-    end
-end
-
-function write_ak_csv(path, mean_ak, err_ak, Lx_eff, Ly_eff; source="")
-    Lx, Ly = resolve_ak_dims(mean_ak, Lx_eff, Ly_eff; source=source)
-    open(path, "w") do io
-        println(io, "kx_idx,ky_idx,kx,ky,A_val,Error")
-        for x in 1:Lx
-            for y in 1:Ly
-                kx = 2π * (x - 1) / Lx
-                ky = 2π * (y - 1) / Ly
-
-                if kx > π
-                    kx -= 2π
-                end
-                if ky > π
-                    ky -= 2π
-                end
-
-                @printf(io, "%d,%d,%.6f,%.6f,%.6f,%.6f\n",
-                        x, y, kx, ky, mean_ak[x, y], err_ak[x, y])
-            end
-        end
-    end
-end
-
-function collect_sweep_data(file; source="")
+function collect_sweep_data(file)
     list_opt = Vector{Vector{Float64}}()
     list_dos = Vector{Vector{Float64}}()
-    list_dos_AN = Vector{Vector{Float64}}()
-    list_dos_AN_patch = Vector{Vector{Float64}}()
+    list_dos_M = Vector{Vector{Float64}}()
+    list_dos_M_patch = Vector{Vector{Float64}}()
     list_ak = Vector{Matrix{Float64}}()
-
-    count = 0
-    patch_count = 0
+    list_mx_path = Vector{Matrix{Float64}}()
+    list_xg_path = Vector{Matrix{Float64}}()
 
     for key in keys(file)
         if startswith(key, "sweep_")
             g = file[key]
             push!(list_opt, g["opt_cond"])
             push!(list_dos, g["dos"])
-            push!(list_dos_AN, g["dos_AN"])
-            push!(list_ak, g["A_k0"])
-            count += 1
-
-            if haskey(g, "dos_AN_patch")
-                push!(list_dos_AN_patch, g["dos_AN_patch"])
-                patch_count += 1
+            push!(list_dos_M, g["dos_M"])
+            if haskey(g, "dos_M_patch")
+                push!(list_dos_M_patch, g["dos_M_patch"])
             end
+            push!(list_ak, g["A_k0"])
+            push!(list_mx_path, g["A_MX_path"])
+            push!(list_xg_path, g["A_XG_path"])
         end
-    end
-
-    if 0 < patch_count < count
-        @warn "Mixed dos_AN_patch presence across sweep groups; skipping patch output." source=source patch_sweeps=patch_count sweep_count=count
-        empty!(list_dos_AN_patch)
-    elseif patch_count == 0
-        empty!(list_dos_AN_patch)
     end
 
     return (opt=list_opt,
             dos=list_dos,
-            dos_AN=list_dos_AN,
-            dos_AN_patch=list_dos_AN_patch,
+            dos_M=list_dos_M,
+            dos_M_patch=list_dos_M_patch,
             ak=list_ak,
-            count=count)
+            mx_path=list_mx_path,
+            xg_path=list_xg_path,
+            count=length(list_dos))
 end
 
 function process_spectra_directory(target_dir::AbstractString=target_dir)
     jld_file = joinpath(target_dir, "spectra_bins.jld2")
 
-    output_opt = joinpath(target_dir, "processed_opt_cond.csv")
-    output_dos = joinpath(target_dir, "processed_dos.csv")
-    output_dos_AN = joinpath(target_dir, "processed_dos_AN.csv")
-    output_dos_AN_patch = joinpath(target_dir, "processed_dos_AN_patch.csv")
-    output_ak = joinpath(target_dir, "processed_ak0.csv")
-
     println("Opening file: $jld_file")
 
     jldopen(jld_file, "r") do file
-        params = file["params"] # ModelParameters
-        omega_grid = read_omega_grid(file, params)
-        dos_omega_grid, spectra_Ltw, Lx_eff, Ly_eff = read_spectra_metadata(file, params)
+        params = file["params"]
+        meta = read_required_metadata(file)
 
-        println("Params: L=$(params.Lx)x$(params.Ly), Beta=$(params.β), spectra_Ltw=$spectra_Ltw, effective=$(Lx_eff)x$(Ly_eff)")
+        println("Params: L=$(params.Lx)x$(params.Ly), Beta=$(params.β), spectra_Ltw=$(meta.spectra_Ltw), effective=$(meta.spectra_Lx_eff)x$(meta.spectra_Ly_eff)")
 
-        data = collect_sweep_data(file; source=jld_file)
+        data = collect_sweep_data(file)
         if data.count == 0
             @warn "No 'sweep_' data found in $jld_file."
             return
@@ -171,33 +78,50 @@ function process_spectra_directory(target_dir::AbstractString=target_dir)
 
         mean_opt, err_opt = calc_stats(data.opt)
         mean_dos, err_dos = calc_stats(data.dos)
-        mean_dos_AN, err_dos_AN = calc_stats(data.dos_AN)
+        mean_dos_M, err_dos_M = calc_stats(data.dos_M)
         mean_ak, err_ak = calc_stats(data.ak)
+        mean_mx_path, err_mx_path = calc_stats(data.mx_path)
+        mean_xg_path, err_xg_path = calc_stats(data.xg_path)
 
-        opt_grid = compatible_grid(omega_grid, mean_opt, "Optical conductivity"; source=jld_file)
-        write_series_csv(output_opt, "omega,Re_Sigma,Error", opt_grid, mean_opt, err_opt)
-        println("Saved: $output_opt")
-
-        dos_grid = compatible_grid(dos_omega_grid, mean_dos, "DOS"; source=jld_file)
-        write_series_csv(output_dos, "omega,DOS,Error", dos_grid, mean_dos, err_dos)
-        println("Saved: $output_dos")
-
-        dos_AN_grid = compatible_grid(dos_omega_grid, mean_dos_AN, "DOS_AN"; source=jld_file)
-        write_series_csv(output_dos_AN, "omega,DOS_AN,Error", dos_AN_grid, mean_dos_AN, err_dos_AN)
-        println("Saved: $output_dos_AN")
-
-        if !isempty(data.dos_AN_patch)
-            mean_dos_AN_patch, err_dos_AN_patch = calc_stats(data.dos_AN_patch)
-            patch_grid = compatible_grid(dos_omega_grid, mean_dos_AN_patch, "DOS_AN_patch"; source=jld_file)
-            write_series_csv(output_dos_AN_patch, "omega,DOS_AN_patch,Error",
-                             patch_grid, mean_dos_AN_patch, err_dos_AN_patch)
-            println("Saved: $output_dos_AN_patch")
+        write_series_csv(joinpath(target_dir, "processed_opt_cond.csv"),
+                         "omega,Re_Sigma,Error", meta.omega_grid, mean_opt, err_opt)
+        write_series_csv(joinpath(target_dir, "processed_dos.csv"),
+                         "omega,DOS,Error", meta.dos_omega_grid, mean_dos, err_dos)
+        write_series_csv(joinpath(target_dir, "processed_dos_M.csv"),
+                         "omega,DOS_M,Error", meta.dos_omega_grid, mean_dos_M, err_dos_M)
+        if !isempty(data.dos_M_patch)
+            mean_dos_M_patch, err_dos_M_patch = calc_stats(data.dos_M_patch)
+            write_series_csv(joinpath(target_dir, "processed_dos_M_patch.csv"),
+                             "omega,DOS_M_patch,Error",
+                             meta.dos_omega_grid, mean_dos_M_patch, err_dos_M_patch)
         else
-            rm(output_dos_AN_patch; force=true)
+            rm(joinpath(target_dir, "processed_dos_M_patch.csv"); force=true)
         end
 
-        write_ak_csv(output_ak, mean_ak, err_ak, Lx_eff, Ly_eff; source=jld_file)
-        println("Saved: $output_ak")
+        write_ak_csv(joinpath(target_dir, "processed_ak0.csv"), mean_ak, err_ak)
+
+        mx_kx = fill(meta.mx_path_kx, length(meta.mx_path_ky))
+        mx_kx_idx = fill(meta.mx_path_kx_idx, length(meta.mx_path_ky))
+        write_path_csv(joinpath(target_dir, "processed_MX_path.csv"), mean_mx_path,
+                       err_mx_path, meta.dos_omega_grid, mx_kx, meta.mx_path_ky,
+                       mx_kx_idx, meta.mx_path_ky_idx)
+        write_path_csv(joinpath(target_dir, "processed_XG_path.csv"), mean_xg_path,
+                       err_xg_path, meta.dos_omega_grid, meta.xg_path_kx,
+                       meta.xg_path_ky, meta.xg_path_kx_idx, meta.xg_path_ky_idx)
+
+        dos_AN, err_AN, peak_AN = path_observable(mean_mx_path, meta.dos_omega_grid,
+                                                  mx_kx, meta.mx_path_ky;
+                                                  err_path=err_mx_path)
+        dos_node, err_node, peak_node = path_observable(mean_xg_path, meta.dos_omega_grid,
+                                                        meta.xg_path_kx, meta.xg_path_ky;
+                                                        err_path=err_xg_path)
+        write_series_csv(joinpath(target_dir, "processed_dos_AN.csv"),
+                         "omega,DOS_AN,Error", meta.dos_omega_grid, dos_AN, err_AN)
+        write_series_csv(joinpath(target_dir, "processed_dos_node.csv"),
+                         "omega,DOS_node,Error", meta.dos_omega_grid, dos_node, err_node)
+        write_peak_summary(joinpath(target_dir, "processed_path_peaks.csv"),
+                           [(source="bins", kind="AN", peak_AN...),
+                            (source="bins", kind="node", peak_node...)])
     end
 end
 

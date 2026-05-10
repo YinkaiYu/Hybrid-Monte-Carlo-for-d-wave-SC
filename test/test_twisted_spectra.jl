@@ -79,7 +79,8 @@ function repeated_supercell_spectra_reference(p::ModelParameters,
 
     dos = zeros(Float64, nω)
     A_k0 = zeros(Float64, Lx_eff, Ly_eff)
-    A_kpath = zeros(Float64, fld(Ly_eff, 2) + 1, nω)
+    A_MX_path = zeros(Float64, fld(Ly_eff, 2) + 1, nω)
+    A_XG_path = zeros(Float64, fld(min(Lx_eff, Ly_eff), 2) + 1, nω)
     lor_cache = zeros(Float64, nω)
     u_r = zeros(ComplexF64, Lx_eff, Ly_eff)
     u_k = similar(u_r)
@@ -114,7 +115,14 @@ function repeated_supercell_spectra_reference(p::ModelParameters,
         for Iy in 0:fld(Ly_eff, 2)
             wk = abs2(u_k[Ix_pi + 1, Iy + 1]) / N_eff
             for iw in eachindex(cache.dos_omega_grid)
-                A_kpath[Iy + 1, iw] += wk * lor_cache[iw]
+                A_MX_path[Iy + 1, iw] += wk * lor_cache[iw]
+            end
+        end
+
+        for I in 0:fld(min(Lx_eff, Ly_eff), 2)
+            wk = abs2(u_k[I + 1, I + 1]) / N_eff
+            for iw in eachindex(cache.dos_omega_grid)
+                A_XG_path[I + 1, iw] += wk * lor_cache[iw]
             end
         end
     end
@@ -122,7 +130,7 @@ function repeated_supercell_spectra_reference(p::ModelParameters,
     dos ./= N_eff
     A_k0 ./= N_eff
 
-    return (dos=dos, A_k_ω0=A_k0, A_kpath=A_kpath)
+    return (dos=dos, A_k_ω0=A_k0, A_MX_path=A_MX_path, A_XG_path=A_XG_path)
 end
 
 function setup_tbc_fixture(; Lx::Int=4, Ly::Int=4)
@@ -244,9 +252,10 @@ end
 
     @test combined.dos_ω_grid == spectra.dos_ω_grid
     @test combined.dos ≈ spectra.dos
-    @test combined.dos_AN ≈ spectra.dos_AN
+    @test combined.dos_M ≈ spectra.dos_M
     @test combined.A_k_ω0 ≈ spectra.A_k_ω0
-    @test combined.A_kpath ≈ spectra.A_kpath
+    @test combined.A_MX_path ≈ spectra.A_MX_path
+    @test combined.A_XG_path ≈ spectra.A_XG_path
 end
 
 @testset "Twisted spectra measurement" begin
@@ -259,7 +268,7 @@ end
 
     tw1 = measure_twisted_spectra(cache, p, state;
                                   Ltw=1,
-                                  antinode_patch_half_width=0.0,
+                                  m_point_patch_half_width=0.0,
                                   reuse_buffers=false)
 
     @test cache.H_base == H_before
@@ -267,24 +276,29 @@ end
     @test cache.U == U_before
 
     @test size(tw1.A_k_ω0) == size(base.A_k_ω0)
-    @test size(tw1.A_kpath) == size(base.A_kpath)
+    @test size(tw1.A_MX_path) == size(base.A_MX_path)
+    @test size(tw1.A_XG_path) == size(base.A_XG_path)
     @test isapprox(tw1.dos, base.dos; atol=1e-8, rtol=1e-8)
-    @test isapprox(tw1.dos_AN, base.dos_AN; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.dos_M, base.dos_M; atol=1e-8, rtol=1e-8)
     @test isapprox(tw1.A_k_ω0, base.A_k_ω0; atol=1e-8, rtol=1e-8)
-    @test isapprox(tw1.A_kpath, base.A_kpath; atol=1e-8, rtol=1e-8)
-    @test isapprox(tw1.dos_AN_patch, tw1.dos_AN; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.A_MX_path, base.A_MX_path; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.A_XG_path, base.A_XG_path; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.dos_M_patch, tw1.dos_M; atol=1e-8, rtol=1e-8)
 
     tw2 = measure_twisted_spectra(cache, p, state; Ltw=2, reuse_buffers=false)
     @test size(tw2.A_k_ω0) == (p.Lx * 2, p.Ly * 2)
-    @test size(tw2.A_kpath, 1) == fld(p.Ly * 2, 2) + 1
-    @test size(tw2.A_kpath, 2) == length(cache.dos_omega_grid)
+    @test size(tw2.A_MX_path, 1) == fld(p.Ly * 2, 2) + 1
+    @test size(tw2.A_MX_path, 2) == length(cache.dos_omega_grid)
+    @test size(tw2.A_XG_path, 1) == fld(min(p.Lx * 2, p.Ly * 2), 2) + 1
+    @test size(tw2.A_XG_path, 2) == length(cache.dos_omega_grid)
     @test length(tw2.kx_grid) == p.Lx * 2
     @test length(tw2.ky_grid) == p.Ly * 2
     @test all(isfinite, tw2.dos)
-    @test all(isfinite, tw2.dos_AN)
-    @test all(isfinite, tw2.dos_AN_patch)
+    @test all(isfinite, tw2.dos_M)
+    @test all(isfinite, tw2.dos_M_patch)
     @test all(isfinite, tw2.A_k_ω0)
-    @test all(isfinite, tw2.A_kpath)
+    @test all(isfinite, tw2.A_MX_path)
+    @test all(isfinite, tw2.A_XG_path)
 end
 
 @testset "Twisted spectra repeated-supercell regression" begin
@@ -296,7 +310,8 @@ end
 
     @test isapprox(tw.dos, ref.dos; atol=1e-8, rtol=1e-8)
     @test isapprox(tw.A_k_ω0, ref.A_k_ω0; atol=1e-8, rtol=1e-8)
-    @test isapprox(tw.A_kpath, ref.A_kpath; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw.A_MX_path, ref.A_MX_path; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw.A_XG_path, ref.A_XG_path; atol=1e-8, rtol=1e-8)
 end
 
 @testset "Twisted spectra odd effective dimensions" begin

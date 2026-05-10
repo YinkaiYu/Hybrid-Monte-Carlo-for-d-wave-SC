@@ -205,7 +205,7 @@ $$ \tilde{u}_{n}(\mathbf{k}) = \frac{1}{\sqrt{N}} \sum_{j=1}^{N} e^{-i \mathbf{k
 
 谱函数的 twisted-boundary-condition (TBC) 测量只作为热化后构型的谱函数后处理使用，不参与 HMC
 采样、力、接受率、输运、光电导或超流刚度。默认 `spectra_Ltw=1` 且
-`use_twisted_spectra=false`，因此旧的谱函数路线、输出字段和数组形状保持不变。
+`use_twisted_spectra=false`，因此默认仍走普通周期边界谱函数路线，不会计算额外 twist sector。
 
 启用
 ```julia
@@ -220,23 +220,37 @@ L_y^{\mathrm{eff}} = L_y L_{\mathrm{tw}}.
 $$
 
 TBC 谱函数要求有效尺寸 $L_x^{\mathrm{eff}}$ 和 $L_y^{\mathrm{eff}}$ 为偶数，以便精确表示
-$(\pi,0)$、$(0,\pi)$ 以及 $k_x=\pi$ 的路径。若启用 TBC 后有效尺寸为奇数，程序会在写出谱文件前报错；关闭
+$(\pi,0)$、$(0,\pi)$ 以及高对称路径上的端点。若启用 TBC 后有效尺寸为奇数，程序会在写出谱文件前报错；关闭
 TBC 时仍沿用原来的最近格点路径约定。
 
-`dos_AN` 保持旧定义，即精确 antinode 点
+谱文件中的 M 点谱定义为
 $$
-A_{\mathrm{AN}}(\omega)=\frac12\left[A((\pi,0),\omega)+A((0,\pi),\omega)\right].
+A_M(\omega)=\frac12\left[A((\pi,0),\omega)+A((0,\pi),\omega)\right].
 $$
-TBC 额外输出 `dos_AN_patch`，它在有效动量网格上对两个 antinode 附近的 patch 做平均，patch 半宽由
-`antinode_patch_half_width` 控制，默认是 $\pi/\max(L_x,L_y)$。TBC 输出文件还会记录
-`spectra_Ltw`、`spectra_Lx_eff`、`spectra_Ly_eff`、`kx_grid`、`ky_grid` 和有效
-`kpath_kx/kpath_ky` 元数据；后处理脚本会优先使用这些元数据，并兼容旧文件中缺少 TBC 字段的情况。
+对应输出字段为 `dos_M`。TBC 还可输出 `dos_M_patch`，它在有效动量网格上对两个 M 点附近的 patch 做平均，patch 半宽由
+`m_point_patch_half_width` 控制，默认是 $\pi/\max(L_x,L_y)$。
+
+对于掺杂模型，真正的反节点动量不必正好落在 M 点。程序因此同时输出 M-X 高对称线谱函数 `A_MX_path`，路径为
+$(\pi,0)\rightarrow(\pi,\pi)$；后处理脚本沿这条路径在 $\omega\simeq0$ 处寻找峰值动量，并默认对峰值点及其相邻
+$\pm1$ 个路径点取平均，输出为 `processed_dos_AN.csv` 或 HPC 汇总目录中的 `spectra_dos_AN.csv`。同理，程序输出
+`A_XG_path` 表示 $\Gamma(0,0)\rightarrow X(\pi,\pi)$ 这条对角线；后处理脚本沿同一条线寻找节点附近峰值，并输出
+`processed_dos_node.csv` 或 `spectra_dos_node.csv`。
+
+TBC 输出文件会记录 `spectra_Ltw`、`spectra_Lx_eff`、`spectra_Ly_eff`、`kx_grid`、`ky_grid`、
+`mx_path_kx/mx_path_ky`、`xg_path_kx/xg_path_ky` 以及对应 index 元数据。启用 TBC 且未显式指定时，
+`run_simulation` 会把谱函数展宽和频率步长默认缩小为
+$$
+\eta_{\mathrm{spectra}}=\eta/L_{\mathrm{tw}}^2,\qquad
+\Delta\omega_{\mathrm{spectra}}=\Delta\omega/L_{\mathrm{tw}}^2,
+$$
+并把实际使用的 `spectra_eta` 与 `spectra_delta_omega` 写入元数据。
 
 ### 赝能隙
 
-为了看 pseudogap，我们关注 antinode 处的谱函数 
-$$A_{\mathrm{AN}}(\omega)\equiv \frac12 \left[A(\mathbf{k}=(\pi,0), \omega)+A(\mathbf{k}=(0,\pi), \omega)\right]$$
-以及局部的 d-wave 配对强度
+为了看 pseudogap，我们关注后处理中沿 M-X 路径确定的反节点谱函数 $A_{\mathrm{AN}}(\omega)$，以及沿
+$\Gamma-X$ 对角线确定的节点附近谱函数 $A_{\mathrm{node}}(\omega)$。M 点谱
+$$A_M(\omega)\equiv \frac12 \left[A(\mathbf{k}=(\pi,0), \omega)+A(\mathbf{k}=(0,\pi), \omega)\right]$$
+仍会输出，但它不再被命名为反节点谱。我们还关注局部的 d-wave 配对强度
 $$
 \Delta_{\text{localpair}} = \frac{J}{N} \sum_i 
 \left| \frac{\braket{ c_{i\uparrow} c_{i+\hat{x}\downarrow} - c_{i\downarrow} c_{i+\hat{x}\uparrow}} - \braket{ c_{i\uparrow} c_{i+\hat{y}\downarrow} - c_{i\downarrow} c_{i+\hat{y}\uparrow}}}{2} \right|

@@ -540,12 +540,12 @@ end
 # ------------------------------------------------
 
 """
-    antinode_kpath(p::ModelParameters)
+    mx_kpath(p::ModelParameters)
 
 返回从 (π, 0) 到 (π, π) 的离散 k 路径索引与动量值。
 如果 Lx/Ly 为奇数，取最接近且不超过 π 的格点。
 """
-function antinode_kpath(p::ModelParameters)
+function mx_kpath(p::ModelParameters)
     kx_idx = fld(p.Lx, 2) + 1
     ky_max_idx = fld(p.Ly, 2) + 1
     ky_indices = collect(1:ky_max_idx)
@@ -567,6 +567,22 @@ function antinode_kpath(p::ModelParameters)
 end
 
 """
+    xg_kpath(p::ModelParameters)
+
+返回从 Γ(0,0) 到 X(π,π) 的离散对角路径索引与动量值。
+路径顺序与峰值搜索无关；后处理会沿这条 X-Γ 线寻找节点附近峰值。
+"""
+function xg_kpath(p::ModelParameters)
+    max_idx = fld(min(p.Lx, p.Ly), 2)
+    idx = collect(0:max_idx)
+    kx_indices = idx .+ 1
+    ky_indices = idx .+ 1
+    kx_vals = 2π .* idx ./ p.Lx
+    ky_vals = 2π .* idx ./ p.Ly
+    return kx_indices, ky_indices, kx_vals, ky_vals
+end
+
+"""
 SpectrumResult
 用于存储 JLD2 的重型数据
 """
@@ -580,12 +596,13 @@ struct SpectrumResult
     optical_conductivity::Vector{Float64}   # Re σ(ω)
     dos_ω_grid::Vector{Float64}             # DOS 用的完整网格
     dos::Vector{Float64}                    # N(ω)
-    dos_AN::Vector{Float64}                  # AN 点的 DOS
+    dos_M::Vector{Float64}                   # M 点 (π,0)/(0,π) 的 DOS
     
     # 动量解析的谱权重 (可选，数据量巨大，通常只存特定路径或求和)
     # 我们这里存: A(k, ω=0) (Fermi Surface) 和 DOS.
     A_k_ω0::Matrix{Float64} # 费米面谱权重
-    A_kpath::Matrix{Float64} # (π,0) -> (π,π) 路径上的 A(k, ω)
+    A_MX_path::Matrix{Float64} # M(π,0) -> X(π,π) 路径上的 A(k,ω)
+    A_XG_path::Matrix{Float64} # Γ(0,0) -> X(π,π) 路径上的 A(k,ω)
 end
 
 struct TransportResult
@@ -598,9 +615,10 @@ end
 struct SpectraOnlyResult
     dos_ω_grid::Vector{Float64}
     dos::Vector{Float64}
-    dos_AN::Vector{Float64}
+    dos_M::Vector{Float64}
     A_k_ω0::Matrix{Float64}
-    A_kpath::Matrix{Float64}
+    A_MX_path::Matrix{Float64}
+    A_XG_path::Matrix{Float64}
 end
 
 # ------------------------------------------------
@@ -757,11 +775,13 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     E = cache.E_n
     dos_ω_grid = cache.dos_omega_grid
     dos_vals = cache.dos_vals
-    dos_AN_vals = cache.dos_AN_vals
+    dos_M_vals = cache.dos_M_vals
     ak_map = cache.ak_map
-    ak_path = cache.ak_path
+    ak_mx_path = cache.ak_mx_path
+    ak_xg_path = cache.ak_xg_path
     lor_cache = cache.lor_cache
-    kpath_weights = cache.kpath_weights
+    mx_path_weights = cache.mx_path_weights
+    xg_path_weights = cache.xg_path_weights
     x_idx = cache.x_idx
     y_idx = cache.y_idx
     parity_x = cache.parity_x
@@ -777,13 +797,16 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     # DOS 网格：从 -ω_max 到 +ω_max (或者稍微大一点，覆盖整个能带)
     # 我们这里使用对称的区间
     fill!(dos_vals, 0.0)
-    fill!(dos_AN_vals, 0.0)
+    fill!(dos_M_vals, 0.0)
     fill!(ak_map, 0.0)
 
-    # A(k, ω) along (π,0) -> (π,π)
-    _, ky_indices, _, _ = antinode_kpath(p)
-    n_kpath = length(ky_indices)
-    fill!(ak_path, 0.0)
+    # A(k,ω) along M(π,0) -> X(π,π) and Γ(0,0) -> X(π,π)
+    _, mx_ky_indices, _, _ = mx_kpath(p)
+    xg_kx_indices, xg_ky_indices, _, _ = xg_kpath(p)
+    n_mx_path = length(mx_ky_indices)
+    n_xg_path = length(xg_kx_indices)
+    fill!(ak_mx_path, 0.0)
+    fill!(ak_xg_path, 0.0)
     
     @inbounds for n in 1:dim
         En = E[n]
@@ -794,8 +817,7 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
             w_n += abs2(U[i, n])
         end
 
-        # 2. DOS at Antinodal Point
-        # AN point in 2D square lattice: (π, 0) or (0, π)
+        # 2. DOS at M points: (π,0) and (0,π)
         # sum_{x,y} u(x,y) * (-1)^x  and  sum_{x,y} u(x,y) * (-1)^y
         sum_pi_0 = ComplexF64(0.0) # k=(pi, 0)
         sum_0_pi = ComplexF64(0.0) # k=(0, pi)
@@ -807,21 +829,26 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
 
         # 计算谱权重 |u_k|^2
         # 注意归一化系数 1/sqrt(N) 平方后为 1/N
-        weight_AN = 0.5 * (abs2(sum_pi_0) + abs2(sum_0_pi)) / N
+        weight_M = 0.5 * (abs2(sum_pi_0) + abs2(sum_0_pi)) / N
 
         # 3. Cache Lorentzian values for this eigenstate
         @inbounds for iw in eachindex(dos_ω_grid)
             lor_cache[iw] = lorentzian(dos_ω_grid[iw] - En, p.η)
         end
 
-        # 4. Add to DOS and DOS_AN
+        @inbounds for i in 1:N
+            cache.u_r_cache[x_idx[i], y_idx[i]] = U[i, n]
+        end
+        mul!(cache.u_k_cache, cache.fft_plan, cache.u_r_cache)
+
+        # 4. Add to DOS and M-point DOS
         @inbounds for iw in eachindex(dos_ω_grid)
             lor_val = lor_cache[iw]
             dos_vals[iw] += w_n * lor_val
-            dos_AN_vals[iw] += weight_AN * lor_val
+            dos_M_vals[iw] += weight_M * lor_val
         end
 
-        # 5. A(k, ω) along kx = π path (1D FFT along y)
+        # 5. A(k,ω) along kx=π M-X path (1D FFT along y)
         @inbounds for y in 1:Ly
             acc = zero(ComplexF64)
             base = (y - 1) * Lx
@@ -833,33 +860,32 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
             cache.u_pi_cache[y] = acc
         end
         mul!(cache.u_pi_k_cache, cache.fft_plan_y, cache.u_pi_cache)
-        @inbounds for (idx, ky_idx) in enumerate(ky_indices)
-            kpath_weights[idx] = abs2(cache.u_pi_k_cache[ky_idx]) / N
+        @inbounds for (idx, ky_idx) in enumerate(mx_ky_indices)
+            mx_path_weights[idx] = abs2(cache.u_pi_k_cache[ky_idx]) / N
         end
         @inbounds for iw in eachindex(dos_ω_grid)
             lor_val = lor_cache[iw]
-            @simd for k in 1:n_kpath
-                ak_path[k, iw] += kpath_weights[k] * lor_val
+            @simd for k in 1:n_mx_path
+                ak_mx_path[k, iw] += mx_path_weights[k] * lor_val
+            end
+        end
+
+        # 6. A(k,ω) along Γ-X diagonal path.
+        @inbounds for idx in 1:n_xg_path
+            xg_path_weights[idx] = abs2(cache.u_k_cache[xg_kx_indices[idx], xg_ky_indices[idx]]) / N
+        end
+        @inbounds for iw in eachindex(dos_ω_grid)
+            lor_val = lor_cache[iw]
+            @simd for k in 1:n_xg_path
+                ak_xg_path[k, iw] += xg_path_weights[k] * lor_val
             end
         end
         
-        # 6. Spectral Function A(k, 0) (Fermi Surface intensity)
+        # 7. Spectral Function A(k,0) (Fermi Surface intensity)
         # Check if En is close to 0 (within η)
         weight_at_zero = lorentzian(-En, p.η)
         
         if weight_at_zero > 1e-6
-            # Perform FFT for this eigenstate
-            # Copy u_{i,n} to buffer
-            @inbounds for i in 1:N
-                # Map 1D i to 2D (x,y)
-                cache.u_r_cache[x_idx[i], y_idx[i]] = U[i, n]
-            end
-            
-            # 执行 In-place FFT
-            # cache.fft_plan * cache.u_r_cache -> cache.u_k_cache
-            # 使用 mul! 避免内存分配
-            mul!(cache.u_k_cache, cache.fft_plan, cache.u_r_cache)
-            
             # Add to map: |u_k|^2 * delta(E)
             for y in 1:Ly, x in 1:Lx
                 ak_map[x, y] += abs2(cache.u_k_cache[x, y]) * weight_at_zero
@@ -873,11 +899,11 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     # 1/sqrt(N) factor in definition means |FFT|^2 / N.
 
     if reuse_buffers
-        return SpectraOnlyResult(dos_ω_grid, dos_vals, dos_AN_vals, ak_map, ak_path)
+        return SpectraOnlyResult(dos_ω_grid, dos_vals, dos_M_vals, ak_map, ak_mx_path, ak_xg_path)
     end
 
-    return SpectraOnlyResult(copy(dos_ω_grid), copy(dos_vals), copy(dos_AN_vals),
-                             copy(ak_map), copy(ak_path))
+    return SpectraOnlyResult(copy(dos_ω_grid), copy(dos_vals), copy(dos_M_vals),
+                             copy(ak_map), copy(ak_mx_path), copy(ak_xg_path))
 end
 
 function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
@@ -890,7 +916,8 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
                           transport.optical_conductivity,
                           spectra.dos_ω_grid,
                           spectra.dos,
-                          spectra.dos_AN,
+                          spectra.dos_M,
                           spectra.A_k_ω0,
-                          spectra.A_kpath)
+                          spectra.A_MX_path,
+                          spectra.A_XG_path)
 end

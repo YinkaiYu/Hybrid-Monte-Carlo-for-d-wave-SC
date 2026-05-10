@@ -282,11 +282,13 @@ mutable struct ComputeCache
     sigma_omega::Vector{Float64}
     dos_omega_grid::Vector{Float64}
     dos_vals::Vector{Float64}
-    dos_AN_vals::Vector{Float64}
+    dos_M_vals::Vector{Float64}
     ak_map::Matrix{Float64}
-    ak_path::Matrix{Float64}
+    ak_mx_path::Matrix{Float64}
+    ak_xg_path::Matrix{Float64}
     lor_cache::Vector{Float64}
-    kpath_weights::Vector{Float64}
+    mx_path_weights::Vector{Float64}
+    xg_path_weights::Vector{Float64}
     omega_inv::Vector{Float64}
 end
 
@@ -343,12 +345,15 @@ function initialize_cache(p::ModelParameters)
     sigma_omega = zeros(Float64, length(omega_grid))
     dos_omega_grid = collect(-p.ω_max:p.Δω:p.ω_max)
     dos_vals = zeros(Float64, length(dos_omega_grid))
-    dos_AN_vals = zeros(Float64, length(dos_omega_grid))
+    dos_M_vals = zeros(Float64, length(dos_omega_grid))
     ak_map = zeros(Float64, p.Lx, p.Ly)
-    ky_max_idx = fld(p.Ly, 2) + 1
-    ak_path = zeros(Float64, ky_max_idx, length(dos_omega_grid))
+    mx_path_len = fld(p.Ly, 2) + 1
+    xg_path_len = fld(min(p.Lx, p.Ly), 2) + 1
+    ak_mx_path = zeros(Float64, mx_path_len, length(dos_omega_grid))
+    ak_xg_path = zeros(Float64, xg_path_len, length(dos_omega_grid))
     lor_cache = zeros(Float64, length(dos_omega_grid))
-    kpath_weights = zeros(Float64, ky_max_idx)
+    mx_path_weights = zeros(Float64, mx_path_len)
+    xg_path_weights = zeros(Float64, xg_path_len)
     omega_inv = 1.0 ./ omega_grid
 
     return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, 
@@ -358,6 +363,6 @@ function initialize_cache(p::ModelParameters)
                         x_idx, y_idx, parity_x, parity_y,
                         u_pi_cache, u_pi_k_cache, fft_plan_y,
                         omega_grid, sigma_omega, dos_omega_grid,
-                        dos_vals, dos_AN_vals, ak_map, ak_path,
-                        lor_cache, kpath_weights, omega_inv)
+                        dos_vals, dos_M_vals, ak_map, ak_mx_path, ak_xg_path,
+                        lor_cache, mx_path_weights, xg_path_weights, omega_inv)
 end

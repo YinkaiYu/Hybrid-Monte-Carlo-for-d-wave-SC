@@ -1,149 +1,21 @@
 using JLD2
-using Statistics
-using DelimitedFiles
-using Printf
 using Glob
 using DwaveHMC
 
+include(normpath(joinpath(@__DIR__, "..", "..", "scripts", "spectra_postprocess_utils.jl")))
+
 target_dir = @__DIR__
-
-# --- 1. 鲁棒的单构型处理 ---
-function process_single_config(jld_path)
-    # 文件存在且有内容
-    if !isfile(jld_path) || filesize(jld_path) == 0
-        return nothing 
-    end
-    
-    try
-        jldopen(jld_path, "r") do file
-            keys_in_file = keys(file)
-            # 必须包含 sweep_ 数据
-            sweep_keys = filter(k -> startswith(k, "sweep_"), keys_in_file)
-            if isempty(sweep_keys) return nothing end
-            
-            # 必须包含 params
-            if !haskey(file, "params") return nothing end
-            
-            # 读取第一个 bin 初始化
-            g1 = file[sweep_keys[1]]
-            sum_opt = copy(g1["opt_cond"])
-            sum_dos = copy(g1["dos"])
-            sum_dos_AN = copy(g1["dos_AN"])
-            sum_ak = copy(g1["A_k0"])
-            sum_akpath = haskey(g1, "A_kpath") ? copy(g1["A_kpath"]) : nothing
-            sum_dos_AN_patch = haskey(g1, "dos_AN_patch") ? copy(g1["dos_AN_patch"]) : nothing
-            patch_count = sum_dos_AN_patch === nothing ? 0 : 1
-            mixed_patch = false
-            count = 1
-            
-            # 累加后续 bin
-            for i in 2:length(sweep_keys)
-                g = file[sweep_keys[i]]
-                sum_opt .+= g["opt_cond"]
-                sum_dos .+= g["dos"]
-                sum_dos_AN .+= g["dos_AN"]
-                sum_ak .+= g["A_k0"]
-                has_patch = haskey(g, "dos_AN_patch")
-                if has_patch
-                    patch_count += 1
-                end
-                if sum_dos_AN_patch !== nothing
-                    if has_patch
-                        sum_dos_AN_patch .+= g["dos_AN_patch"]
-                    else
-                        mixed_patch = true
-                    end
-                elseif has_patch
-                    mixed_patch = true
-                end
-                if sum_akpath !== nothing
-                    if !haskey(g, "A_kpath")
-                        return nothing
-                    end
-                    sum_akpath .+= g["A_kpath"]
-                end
-                count += 1
-            end
-            
-            p = file["params"]
-            meta = Dict{String, Any}()
-            if haskey(file, "omega_grid") meta["omega_grid"] = file["omega_grid"] end
-            if haskey(file, "dos_omega_grid") meta["dos_omega_grid"] = file["dos_omega_grid"] end
-            if haskey(file, "kpath_kx") meta["kpath_kx"] = file["kpath_kx"] end
-            if haskey(file, "kpath_ky") meta["kpath_ky"] = file["kpath_ky"] end
-            if haskey(file, "kpath_kx_idx") meta["kpath_kx_idx"] = file["kpath_kx_idx"] end
-            if haskey(file, "kpath_ky_idx") meta["kpath_ky_idx"] = file["kpath_ky_idx"] end
-            meta["spectra_Ltw"] = haskey(file, "spectra_Ltw") ? Int(file["spectra_Ltw"]) : 1
-            meta["spectra_Lx_eff"] = haskey(file, "spectra_Lx_eff") ? Int(file["spectra_Lx_eff"]) : p.Lx
-            meta["spectra_Ly_eff"] = haskey(file, "spectra_Ly_eff") ? Int(file["spectra_Ly_eff"]) : p.Ly
-
-            dos_AN_patch = nothing
-            if mixed_patch
-                @warn "Mixed dos_AN_patch presence inside config; skipping patch for this config." file=jld_path patch_sweeps=patch_count sweep_count=count
-            elseif sum_dos_AN_patch !== nothing
-                dos_AN_patch = sum_dos_AN_patch ./ count
-            end
-            
-            # 计算平均
-            res = (opt=sum_opt ./ count, dos=sum_dos ./ count, dos_AN=sum_dos_AN ./ count,
-                   ak0=sum_ak ./ count,
-                   akpath=sum_akpath === nothing ? nothing : (sum_akpath ./ count),
-                   dos_AN_patch=dos_AN_patch,
-                   params=p, meta=meta)
-            
-            # 检查 NaN
-            if any(isnan, res.opt) || any(isnan, res.dos) ||
-               (res.dos_AN_patch !== nothing && any(isnan, res.dos_AN_patch))
-                return nothing
-            end
-            
-            return res
-        end
-    catch
-        return nothing
-    end
-end
-
-function calc_final_stats(list_of_means)
-    n = length(list_of_means)
-    if n == 0 return nothing, nothing end
-    
-    total_sum = sum(list_of_means)
-    final_mean = total_sum ./ n
-    
-    if n > 1
-        sq_diff_sum = sum((x .- final_mean).^2 for x in list_of_means)
-        var = sq_diff_sum ./ (n - 1)
-        sem = sqrt.(var ./ n)
-    else
-        sem = zeros(eltype(final_mean), size(final_mean))
-    end
-    return final_mean, sem
-end
-
-function compatible_grid(grid, values, label; source="")
-    if length(grid) == length(values)
-        return grid
-    end
-    @warn "$label grid size mismatch; using fallback range." source=source grid_length=length(grid) data_length=length(values)
-    return range(first(grid), stop=last(grid), length=length(values))
-end
-
-function resolve_ak_dims(final_ak, Lx_eff, Ly_eff; source="")
-    actual_dims = size(final_ak)
-    if actual_dims != (Lx_eff, Ly_eff)
-        @warn "A_k0 size differs from spectra metadata; using actual array size." source=source metadata=(Lx_eff, Ly_eff) actual=actual_dims
-        return actual_dims
-    end
-    return Lx_eff, Ly_eff
-end
 
 const SPECTRA_OUTPUT_FILES = [
     "spectra_opt_cond.csv",
     "spectra_dos.csv",
-    "spectra_dos_AN_patch.csv",
+    "spectra_dos_M_patch.csv",
     "spectra_ak0.csv",
-    "spectra_akpath.csv",
+    "spectra_MX_path.csv",
+    "spectra_XG_path.csv",
+    "spectra_dos_AN.csv",
+    "spectra_dos_node.csv",
+    "spectra_path_peaks.csv",
 ]
 
 function remove_spectra_outputs!(dir_path)
@@ -152,66 +24,86 @@ function remove_spectra_outputs!(dir_path)
     end
 end
 
-function resolved_output_grids(res)
-    p = res.params
-    meta = res.meta
-    omega_grid = haskey(meta, "omega_grid") ? collect(meta["omega_grid"]) :
-                 collect(p.ω_min : p.Δω : p.ω_max)
-    dos_omega_grid = haskey(meta, "dos_omega_grid") ? collect(meta["dos_omega_grid"]) :
-                     collect(-p.ω_max : p.Δω : p.ω_max)
-
-    if length(omega_grid) != length(res.opt)
-        omega_grid = collect(range(p.ω_min, stop=p.ω_max, length=length(res.opt)))
-    end
-    if length(dos_omega_grid) != length(res.dos)
-        dos_omega_grid = collect(range(-p.ω_max, stop=p.ω_max, length=length(res.dos)))
-    end
-
-    return omega_grid, dos_omega_grid
-end
-
-function resolved_kpath_signature(res)
-    if res.akpath === nothing
-        return (present=false, shape=nothing, kx=nothing, ky=nothing, ky_idx=nothing)
-    end
-
-    meta = res.meta
-    kx_val = haskey(meta, "kpath_kx") ? meta["kpath_kx"] : nothing
-    ky_vals = haskey(meta, "kpath_ky") ? meta["kpath_ky"] : nothing
-    ky_indices = haskey(meta, "kpath_ky_idx") ? meta["kpath_ky_idx"] : nothing
-
-    if kx_val === nothing || ky_vals === nothing
-        _, ky_indices_fallback, kx_val_fallback, ky_vals_fallback = DwaveHMC.antinode_kpath(res.params)
-        kx_val = kx_val === nothing ? kx_val_fallback : kx_val
-        ky_vals = ky_vals === nothing ? ky_vals_fallback : ky_vals
-        ky_indices = ky_indices === nothing ? ky_indices_fallback : ky_indices
-    end
-    if ky_indices === nothing
-        ky_indices = collect(1:length(ky_vals))
-    end
-
-    return (present=true,
-            shape=size(res.akpath),
-            kx=kx_val,
-            ky=collect(ky_vals),
-            ky_idx=collect(ky_indices))
-end
-
-function compatibility_signature(res)
-    omega_grid, dos_omega_grid = resolved_output_grids(res)
-    meta = res.meta
-    return (
-        omega_grid=omega_grid,
-        dos_omega_grid=dos_omega_grid,
-        spectra_Lx_eff=Int(get(meta, "spectra_Lx_eff", res.params.Lx)),
-        spectra_Ly_eff=Int(get(meta, "spectra_Ly_eff", res.params.Ly)),
-        opt_size=size(res.opt),
-        dos_size=size(res.dos),
-        dos_AN_size=size(res.dos_AN),
-        ak0_size=size(res.ak0),
-        dos_AN_patch_size=res.dos_AN_patch === nothing ? nothing : size(res.dos_AN_patch),
-        kpath=resolved_kpath_signature(res),
+function read_required_metadata(file)
+    return Dict{String, Any}(
+        "omega_grid" => collect(file["omega_grid"]),
+        "dos_omega_grid" => collect(file["dos_omega_grid"]),
+        "spectra_Ltw" => Int(file["spectra_Ltw"]),
+        "spectra_Lx_eff" => Int(file["spectra_Lx_eff"]),
+        "spectra_Ly_eff" => Int(file["spectra_Ly_eff"]),
+        "mx_path_kx" => Float64(file["mx_path_kx"]),
+        "mx_path_ky" => collect(file["mx_path_ky"]),
+        "mx_path_kx_idx" => Int(file["mx_path_kx_idx"]),
+        "mx_path_ky_idx" => collect(file["mx_path_ky_idx"]),
+        "xg_path_kx" => collect(file["xg_path_kx"]),
+        "xg_path_ky" => collect(file["xg_path_ky"]),
+        "xg_path_kx_idx" => collect(file["xg_path_kx_idx"]),
+        "xg_path_ky_idx" => collect(file["xg_path_ky_idx"]),
     )
+end
+
+function process_single_config(jld_path)
+    if !isfile(jld_path) || filesize(jld_path) == 0
+        return nothing
+    end
+
+    try
+        jldopen(jld_path, "r") do file
+            sweep_keys = filter(k -> startswith(k, "sweep_"), keys(file))
+            isempty(sweep_keys) && return nothing
+            haskey(file, "params") || return nothing
+            sort!(sweep_keys)
+
+            meta = read_required_metadata(file)
+            g1 = file[sweep_keys[1]]
+            sum_opt = copy(g1["opt_cond"])
+            sum_dos = copy(g1["dos"])
+            sum_dos_M = copy(g1["dos_M"])
+            sum_ak = copy(g1["A_k0"])
+            sum_mx_path = copy(g1["A_MX_path"])
+            sum_xg_path = copy(g1["A_XG_path"])
+            has_patch = haskey(g1, "dos_M_patch")
+            sum_dos_M_patch = has_patch ? copy(g1["dos_M_patch"]) : nothing
+            count = 1
+
+            for i in 2:length(sweep_keys)
+                g = file[sweep_keys[i]]
+                if haskey(g, "dos_M_patch") != has_patch
+                    return nothing
+                end
+                sum_opt .+= g["opt_cond"]
+                sum_dos .+= g["dos"]
+                sum_dos_M .+= g["dos_M"]
+                sum_ak .+= g["A_k0"]
+                sum_mx_path .+= g["A_MX_path"]
+                sum_xg_path .+= g["A_XG_path"]
+                if has_patch
+                    sum_dos_M_patch .+= g["dos_M_patch"]
+                end
+                count += 1
+            end
+
+            res = (opt=sum_opt ./ count,
+                   dos=sum_dos ./ count,
+                   dos_M=sum_dos_M ./ count,
+                   dos_M_patch=has_patch ? (sum_dos_M_patch ./ count) : nothing,
+                   ak0=sum_ak ./ count,
+                   mx_path=sum_mx_path ./ count,
+                   xg_path=sum_xg_path ./ count,
+                   params=file["params"],
+                   meta=meta)
+
+            if any(isnan, res.opt) || any(isnan, res.dos) || any(isnan, res.dos_M) ||
+               any(isnan, res.ak0) || any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
+               (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
+                return nothing
+            end
+
+            return res
+        end
+    catch
+        return nothing
+    end
 end
 
 function same_metadata_value(a, b)
@@ -224,35 +116,41 @@ function same_metadata_value(a, b)
     end
 end
 
+function compatibility_signature(res)
+    meta = res.meta
+    return (
+        omega_grid=meta["omega_grid"],
+        dos_omega_grid=meta["dos_omega_grid"],
+        spectra_Lx_eff=meta["spectra_Lx_eff"],
+        spectra_Ly_eff=meta["spectra_Ly_eff"],
+        opt_size=size(res.opt),
+        dos_size=size(res.dos),
+        dos_M_size=size(res.dos_M),
+        dos_M_patch_size=res.dos_M_patch === nothing ? nothing : size(res.dos_M_patch),
+        ak0_size=size(res.ak0),
+        mx_path_size=size(res.mx_path),
+        xg_path_size=size(res.xg_path),
+        mx_path_kx=meta["mx_path_kx"],
+        mx_path_ky=meta["mx_path_ky"],
+        mx_path_kx_idx=meta["mx_path_kx_idx"],
+        mx_path_ky_idx=meta["mx_path_ky_idx"],
+        xg_path_kx=meta["xg_path_kx"],
+        xg_path_ky=meta["xg_path_ky"],
+        xg_path_kx_idx=meta["xg_path_kx_idx"],
+        xg_path_ky_idx=meta["xg_path_ky_idx"],
+    )
+end
+
 function compatibility_mismatches(reference, candidate)
     mismatches = String[]
-
-    for field in (:omega_grid, :dos_omega_grid, :spectra_Lx_eff, :spectra_Ly_eff,
-                  :opt_size, :dos_size, :dos_AN_size, :ak0_size)
+    for field in fieldnames(typeof(reference))
         if !same_metadata_value(getfield(reference, field), getfield(candidate, field))
             push!(mismatches, String(field))
         end
     end
-
-    if reference.dos_AN_patch_size !== nothing && candidate.dos_AN_patch_size !== nothing &&
-       !same_metadata_value(reference.dos_AN_patch_size, candidate.dos_AN_patch_size)
-        push!(mismatches, "dos_AN_patch_size")
-    end
-
-    if reference.kpath.present != candidate.kpath.present
-        push!(mismatches, "A_kpath_presence")
-    elseif reference.kpath.present
-        for field in (:shape, :kx, :ky, :ky_idx)
-            if !same_metadata_value(getfield(reference.kpath, field), getfield(candidate.kpath, field))
-                push!(mismatches, "A_kpath_$(field)")
-            end
-        end
-    end
-
     return mismatches
 end
 
-# --- 2. 处理单个 T 目录 ---
 function process_T_directory(dir_path)
     conf_dirs = glob("conf_*", dir_path)
     if isempty(conf_dirs)
@@ -260,50 +158,62 @@ function process_T_directory(dir_path)
         return
     end
     sort!(conf_dirs)
-    
+
     println("Processing $(basename(dir_path))...")
-    
+
     samples_opt = []
     samples_dos = []
-    samples_dos_AN = []
-    samples_dos_AN_patch = []
+    samples_dos_M = []
+    samples_dos_M_patch = []
     samples_ak = []
-    samples_akpath = []
-    reference_params = nothing
-    reference_meta = Dict{String, Any}()
+    samples_mx_path = []
+    samples_xg_path = []
+    samples_AN = []
+    samples_node = []
+    peak_rows = []
+    reference_meta = nothing
     reference_signature = nothing
-    
-    # 收集有效样本
+
     for c_dir in conf_dirs
         jld_path = joinpath(c_dir, "spectra_bins.jld2")
         res = process_single_config(jld_path)
-        if res !== nothing
-            sig = compatibility_signature(res)
-            if reference_signature === nothing
-                reference_signature = sig
-                reference_params = res.params
-                reference_meta = res.meta
-            else
-                mismatches = compatibility_mismatches(reference_signature, sig)
-                if !isempty(mismatches)
-                    @warn "Skipping incompatible spectra config." config=c_dir mismatches=join(mismatches, ", ")
-                    continue
-                end
-            end
+        if res === nothing
+            continue
+        end
 
-            push!(samples_opt, res.opt)
-            push!(samples_dos, res.dos)
-            push!(samples_dos_AN, res.dos_AN)
-            push!(samples_ak, res.ak0)
-            if res.dos_AN_patch !== nothing
-                push!(samples_dos_AN_patch, res.dos_AN_patch)
-            end
-            if res.akpath !== nothing
-                push!(samples_akpath, res.akpath)
+        sig = compatibility_signature(res)
+        if reference_signature === nothing
+            reference_signature = sig
+            reference_meta = res.meta
+        else
+            mismatches = compatibility_mismatches(reference_signature, sig)
+            if !isempty(mismatches)
+                @warn "Skipping incompatible spectra config." config=c_dir mismatches=join(mismatches, ", ")
+                continue
             end
         end
+
+        mx_kx = fill(res.meta["mx_path_kx"], length(res.meta["mx_path_ky"]))
+        AN_spectrum, _, peak_AN = path_observable(res.mx_path, res.meta["dos_omega_grid"],
+                                                  mx_kx, res.meta["mx_path_ky"])
+        node_spectrum, _, peak_node = path_observable(res.xg_path, res.meta["dos_omega_grid"],
+                                                      res.meta["xg_path_kx"], res.meta["xg_path_ky"])
+
+        push!(samples_opt, res.opt)
+        push!(samples_dos, res.dos)
+        push!(samples_dos_M, res.dos_M)
+        if res.dos_M_patch !== nothing
+            push!(samples_dos_M_patch, res.dos_M_patch)
+        end
+        push!(samples_ak, res.ak0)
+        push!(samples_mx_path, res.mx_path)
+        push!(samples_xg_path, res.xg_path)
+        push!(samples_AN, AN_spectrum)
+        push!(samples_node, node_spectrum)
+        push!(peak_rows, (source=basename(c_dir), kind="AN", peak_AN...))
+        push!(peak_rows, (source=basename(c_dir), kind="node", peak_node...))
     end
-    
+
     real_n = length(samples_opt)
     if real_n == 0
         remove_spectra_outputs!(dir_path)
@@ -311,104 +221,61 @@ function process_T_directory(dir_path)
         return
     end
     println("  -> Valid Samples: $real_n / $(length(conf_dirs))")
-    
-    # 计算统计
-    final_opt, err_opt = calc_final_stats(samples_opt)
-    final_dos, err_dos = calc_final_stats(samples_dos)
-    final_dos_AN, err_dos_AN = calc_final_stats(samples_dos_AN)
-    final_dos_AN_patch = nothing
-    err_dos_AN_patch = nothing
-    if length(samples_dos_AN_patch) == real_n
-        final_dos_AN_patch, err_dos_AN_patch = calc_final_stats(samples_dos_AN_patch)
-    elseif !isempty(samples_dos_AN_patch)
-        @warn "Mixed dos_AN_patch presence across configs; skipping patch output." dir=dir_path patch_configs=length(samples_dos_AN_patch) valid_configs=real_n
-    end
-    final_ak, err_ak = calc_final_stats(samples_ak)
-    final_akpath = nothing
-    err_akpath = nothing
-    if !isempty(samples_akpath)
-        final_akpath, err_akpath = calc_final_stats(samples_akpath)
-    end
-    
-    # 重建网格
-    p = reference_params
-    omega_grid = reference_signature.omega_grid
-    dos_omega_grid = reference_signature.dos_omega_grid
-    
-    # 写入 CSV 到 T 目录内
-    open(joinpath(dir_path, "spectra_opt_cond.csv"), "w") do io
-        println(io, "omega,Re_Sigma,Error")
-        for i in 1:length(final_opt)
-            @printf(io, "%.6f,%.6e,%.6e\n", omega_grid[i], final_opt[i], err_opt[i])
-        end
-    end
-    
+
+    final_opt, err_opt = calc_stats(samples_opt)
+    final_dos, err_dos = calc_stats(samples_dos)
+    final_dos_M, err_dos_M = calc_stats(samples_dos_M)
+    final_ak, err_ak = calc_stats(samples_ak)
+    final_mx_path, err_mx_path = calc_stats(samples_mx_path)
+    final_xg_path, err_xg_path = calc_stats(samples_xg_path)
+    final_AN, err_AN = calc_stats(samples_AN)
+    final_node, err_node = calc_stats(samples_node)
+
+    meta = reference_meta
+    omega_grid = meta["omega_grid"]
+    dos_omega_grid = meta["dos_omega_grid"]
+
+    write_series_csv(joinpath(dir_path, "spectra_opt_cond.csv"),
+                     "omega,Re_Sigma,Error", omega_grid, final_opt, err_opt)
+
     open(joinpath(dir_path, "spectra_dos.csv"), "w") do io
-        println(io, "omega,DOS,DOS_Error,DOS_AN,DOS_AN_Error")
-        for i in 1:length(final_dos)
-            @printf(io, "%.6f,%.6e,%.6e,%.6e,%.6e\n", 
-                    dos_omega_grid[i], final_dos[i], err_dos[i], 
-                    final_dos_AN[i], err_dos_AN[i])
+        println(io, "omega,DOS,DOS_Error,DOS_M,DOS_M_Error")
+        for i in eachindex(final_dos)
+            @printf(io, "%.6f,%.6e,%.6e,%.6e,%.6e\n",
+                    dos_omega_grid[i], final_dos[i], err_dos[i],
+                    final_dos_M[i], err_dos_M[i])
         end
     end
 
-    if final_dos_AN_patch !== nothing && err_dos_AN_patch !== nothing
-        patch_grid = compatible_grid(dos_omega_grid, final_dos_AN_patch, "DOS_AN_patch"; source=dir_path)
-        open(joinpath(dir_path, "spectra_dos_AN_patch.csv"), "w") do io
-            println(io, "omega,DOS_AN_patch,Error")
-            for i in 1:length(final_dos_AN_patch)
-                @printf(io, "%.6f,%.6e,%.6e\n",
-                        patch_grid[i], final_dos_AN_patch[i], err_dos_AN_patch[i])
-            end
-        end
+    if length(samples_dos_M_patch) == real_n
+        final_dos_M_patch, err_dos_M_patch = calc_stats(samples_dos_M_patch)
+        write_series_csv(joinpath(dir_path, "spectra_dos_M_patch.csv"),
+                         "omega,DOS_M_patch,Error", dos_omega_grid,
+                         final_dos_M_patch, err_dos_M_patch)
     else
-        rm(joinpath(dir_path, "spectra_dos_AN_patch.csv"); force=true)
-    end
-    
-    open(joinpath(dir_path, "spectra_ak0.csv"), "w") do io
-        println(io, "kx_idx,ky_idx,kx,ky,A_val,Error")
-        Lx_eff = Int(get(reference_meta, "spectra_Lx_eff", p.Lx))
-        Ly_eff = Int(get(reference_meta, "spectra_Ly_eff", p.Ly))
-        Lx, Ly = resolve_ak_dims(final_ak, Lx_eff, Ly_eff; source=dir_path)
-        for x in 1:Lx
-            for y in 1:Ly
-                kx = 2π * (x - 1) / Lx
-                ky = 2π * (y - 1) / Ly
-                if kx > π kx -= 2π end
-                if ky > π ky -= 2π end
-                @printf(io, "%d,%d,%.6f,%.6f,%.6e,%.6e\n", 
-                        x, y, kx, ky, final_ak[x, y], err_ak[x, y])
-            end
-        end
+        rm(joinpath(dir_path, "spectra_dos_M_patch.csv"); force=true)
     end
 
-    if final_akpath !== nothing && err_akpath !== nothing
-        kpath = reference_signature.kpath
-        kx_val = kpath.kx
-        ky_vals = kpath.ky
-        ky_indices = kpath.ky_idx
+    write_ak_csv(joinpath(dir_path, "spectra_ak0.csv"), final_ak, err_ak)
 
-        open(joinpath(dir_path, "spectra_akpath.csv"), "w") do io
-            println(io, "k_idx,ky_idx,kx,ky,omega,A_val,Error")
-            for (k_idx, ky_idx) in enumerate(ky_indices)
-                ky = ky_vals[k_idx]
-                for i in 1:length(dos_omega_grid)
-                    @printf(io, "%d,%d,%.6f,%.6f,%.6f,%.6e,%.6e\n",
-                            k_idx, ky_idx, kx_val, ky, dos_omega_grid[i],
-                            final_akpath[k_idx, i], err_akpath[k_idx, i])
-                end
-            end
-        end
-    else
-        rm(joinpath(dir_path, "spectra_akpath.csv"); force=true)
-    end
+    mx_kx = fill(meta["mx_path_kx"], length(meta["mx_path_ky"]))
+    mx_kx_idx = fill(meta["mx_path_kx_idx"], length(meta["mx_path_ky"]))
+    write_path_csv(joinpath(dir_path, "spectra_MX_path.csv"), final_mx_path,
+                   err_mx_path, dos_omega_grid, mx_kx, meta["mx_path_ky"],
+                   mx_kx_idx, meta["mx_path_ky_idx"])
+    write_path_csv(joinpath(dir_path, "spectra_XG_path.csv"), final_xg_path,
+                   err_xg_path, dos_omega_grid, meta["xg_path_kx"],
+                   meta["xg_path_ky"], meta["xg_path_kx_idx"], meta["xg_path_ky_idx"])
+    write_series_csv(joinpath(dir_path, "spectra_dos_AN.csv"),
+                     "omega,DOS_AN,Error", dos_omega_grid, final_AN, err_AN)
+    write_series_csv(joinpath(dir_path, "spectra_dos_node.csv"),
+                     "omega,DOS_node,Error", dos_omega_grid, final_node, err_node)
+    write_peak_summary(joinpath(dir_path, "spectra_path_peaks.csv"), peak_rows)
 end
 
 function main()
     println("Starting Robust T-scan Spectra Processing...")
-
     T_dirs = glob("T_*", target_dir)
-    # 数字排序
     sort!(T_dirs, by = d -> try parse(Float64, split(basename(d), "_")[2]) catch; 0.0 end)
 
     for t_dir in T_dirs

@@ -36,17 +36,21 @@ end
 
                 @test haskey(file, "omega_grid")
                 @test haskey(file, "dos_omega_grid")
-                @test haskey(file, "kpath_kx_idx")
-                @test haskey(file, "kpath_ky_idx")
-                @test haskey(file, "kpath_kx")
-                @test haskey(file, "kpath_ky")
+                    @test haskey(file, "mx_path_kx_idx")
+                    @test haskey(file, "mx_path_ky_idx")
+                    @test haskey(file, "mx_path_kx")
+                    @test haskey(file, "mx_path_ky")
+                    @test haskey(file, "xg_path_kx")
+                    @test haskey(file, "xg_path_ky")
 
                 @test haskey(file, "sweep_1")
                 g = file["sweep_1"]
-                for key in ("opt_cond", "dos", "dos_AN", "A_k0", "A_kpath", "count")
+                for key in ("opt_cond", "dos", "dos_M", "A_k0", "A_MX_path", "A_XG_path", "count")
                     @test haskey(g, key)
                 end
                 @test size(g["A_k0"]) == (4, 4)
+                @test !haskey(g, "dos_M_patch")
+                @test !haskey(g, "dos_AN")
                 @test !haskey(g, "dos_AN_patch")
             end
         end
@@ -65,10 +69,16 @@ end
                 @test file["spectra_Lx_eff"] == 8
                 @test file["spectra_Ly_eff"] == 8
 
-                for key in ("antinode_patch_half_width",
+                @test file["spectra_eta"] == 0.25 / 4
+                @test file["spectra_delta_omega"] == 0.25 / 4
+                @test length(file["dos_omega_grid"]) > length(collect(-2.0:0.25:2.0))
+
+                for key in ("m_point_patch_half_width",
                             "dos_omega_grid",
-                            "kpath_kx",
-                            "kpath_ky",
+                            "mx_path_kx",
+                            "mx_path_ky",
+                            "xg_path_kx",
+                            "xg_path_ky",
                             "kx_grid",
                             "ky_grid")
                     @test haskey(file, key)
@@ -76,10 +86,15 @@ end
 
                 g = file["sweep_1"]
                 @test size(g["A_k0"]) == (8, 8)
-                @test size(g["A_kpath"], 1) == 5
-                @test haskey(g, "dos_AN_patch")
-                @test all(isfinite, g["dos_AN_patch"])
-                @test length(g["dos_AN_patch"]) == length(g["dos"])
+                @test size(g["A_MX_path"], 1) == 5
+                @test size(g["A_XG_path"], 1) == 5
+                @test haskey(g, "dos_M")
+                @test haskey(g, "dos_M_patch")
+                @test !haskey(g, "dos_AN")
+                @test !haskey(g, "dos_AN_patch")
+                @test all(isfinite, g["dos_M_patch"])
+                @test length(g["dos_M_patch"]) == length(g["dos"])
+                @test length(g["dos"]) == length(file["dos_omega_grid"])
             end
         end
     end
