@@ -24,7 +24,9 @@ end
 
 function write_synthetic_spectra(dir; effective=(4, 4), metadata=true,
                                  patch_mode=:all, nsweeps=2, offset=0.0,
-                                 dos_grid=[-2.0, 0.0, 2.0])
+                                 dos_grid=[-2.0, 0.0, 2.0],
+                                 akpath_shape=nothing, kpath_kx=pi,
+                                 kpath_ky=nothing, kpath_ky_idx=nothing)
     mkpath(dir)
     p = tiny_params()
     jldopen(joinpath(dir, "spectra_bins.jld2"), "w") do file
@@ -36,6 +38,16 @@ function write_synthetic_spectra(dir; effective=(4, 4), metadata=true,
             file["spectra_Lx_eff"] = effective[1]
             file["spectra_Ly_eff"] = effective[2]
         end
+        if akpath_shape !== nothing
+            ky_values = kpath_ky === nothing ?
+                        collect(range(-pi, stop=pi, length=akpath_shape[1])) :
+                        collect(kpath_ky)
+            file["kpath_kx"] = kpath_kx
+            file["kpath_ky"] = ky_values
+            if kpath_ky_idx !== nothing
+                file["kpath_ky_idx"] = collect(kpath_ky_idx)
+            end
+        end
 
         for sweep in 1:nsweeps
             prefix = "sweep_$sweep"
@@ -43,6 +55,9 @@ function write_synthetic_spectra(dir; effective=(4, 4), metadata=true,
             file["$prefix/dos"] = [3.0, 4.0, 5.0] .+ offset .+ sweep
             file["$prefix/dos_AN"] = [6.0, 7.0, 8.0] .+ offset .+ sweep
             file["$prefix/A_k0"] = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
+            if akpath_shape !== nothing
+                file["$prefix/A_kpath"] = reshape(collect(1.0:prod(akpath_shape)), akpath_shape) .+ offset .+ sweep
+            end
 
             has_patch = patch_mode == :all || (patch_mode == :mixed && sweep == 1)
             if has_patch
@@ -148,6 +163,51 @@ end
         @test !did_throw
         @test csv_data_rows(joinpath(t_dir, "spectra_ak0.csv")) == 16
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 4.5
+    end
+end
+
+@testset "projectHPC batch processor skips mismatched A_kpath metadata" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        dos_grid = [-2.0, 0.0, 2.0]
+        reference_shape = (2, length(dos_grid))
+        reference_ky = [-0.25, 0.25]
+        reference_ky_idx = [2, 4]
+
+        write_synthetic_spectra(joinpath(t_dir, "conf_001");
+                                dos_grid=dos_grid,
+                                akpath_shape=reference_shape,
+                                kpath_kx=0.5,
+                                kpath_ky=reference_ky,
+                                kpath_ky_idx=reference_ky_idx,
+                                offset=0.0)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002");
+                                dos_grid=dos_grid,
+                                akpath_shape=(3, length(dos_grid)),
+                                kpath_kx=0.5,
+                                kpath_ky=[-0.5, 0.0, 0.5],
+                                kpath_ky_idx=[1, 2, 3],
+                                offset=1000.0)
+        write_synthetic_spectra(joinpath(t_dir, "conf_003");
+                                dos_grid=dos_grid,
+                                akpath_shape=reference_shape,
+                                kpath_kx=0.5,
+                                kpath_ky=reference_ky,
+                                kpath_ky_idx=reference_ky_idx,
+                                offset=4.0)
+
+        did_throw = false
+        try
+            Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
+        catch
+            did_throw = true
+        end
+
+        akpath_csv = joinpath(t_dir, "spectra_akpath.csv")
+        @test !did_throw
+        @test isfile(akpath_csv)
+        @test csv_data_rows(akpath_csv) == reference_shape[1] * length(dos_grid)
+        @test first_data_value(akpath_csv, 6) == 4.5
     end
 end
 
