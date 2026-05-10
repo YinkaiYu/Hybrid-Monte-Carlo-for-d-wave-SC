@@ -89,6 +89,166 @@ struct ObservablesResult
 end
 
 """
+    TwistStiffnessResult
+
+Finite-difference diagnostics for the x-direction Peierls-twist stiffness.
+"""
+struct TwistStiffnessResult
+    Ax::Float64
+    S0::Float64
+    Splus::Float64
+    Sminus::Float64
+    s1::Float64
+    s2::Float64
+    rho_curvature_config::Float64
+end
+
+"""
+    TwistQyStiffnessResult
+
+Finite-q transverse twist diagnostics for benchmarking the qy Kubo
+current-current response.
+"""
+struct TwistQyStiffnessResult
+    Ax::Float64
+    qy::Float64
+    rho_curvature_cos::Float64
+    rho_curvature_sin::Float64
+    rho_curvature_avg::Float64
+    diag_correction::Float64
+    rho_offdiag_corrected::Float64
+end
+
+"""
+    fermion_logdet_action_from_eigs(E, β)
+
+Return the dimensionless fermion action using the same positive-eigenvalue
+convention as compute_total_energy, without boson or HMC momentum terms.
+"""
+function fermion_logdet_action_from_eigs(E::AbstractVector{<:Real}, β::Float64)
+    S = 0.0
+    @inbounds for En in E
+        if En > 0
+            x = β * En
+            S -= x + 2.0 * log1pexp(-x)
+        end
+    end
+    return S
+end
+
+function twisted_fermion_action!(H_twist::Matrix{ComplexF64},
+                                 cache::ComputeCache,
+                                 p::ModelParameters,
+                                 state::SimulationState,
+                                 Ax::Float64)
+    build_twisted_H_BdG!(H_twist, cache, p, state, Ax)
+    vals = eigvals!(Hermitian(H_twist, :U))
+    return fermion_logdet_action_from_eigs(vals, p.β)
+end
+
+function twisted_fermion_action_qy!(H_twist::Matrix{ComplexF64},
+                                    cache::ComputeCache,
+                                    p::ModelParameters,
+                                    state::SimulationState,
+                                    Ax::Float64,
+                                    qy::Float64,
+                                    phase_shift::Float64)
+    build_twisted_H_BdG_qy!(H_twist, cache, p, state, Ax, qy, phase_shift)
+    vals = eigvals!(Hermitian(H_twist, :U))
+    return fermion_logdet_action_from_eigs(vals, p.β)
+end
+
+"""
+    measure_twist_stiffness(cache, p, state; Ax=1e-3)
+
+Compute finite-difference twist estimators for the current Δ configuration.
+The full ensemble stiffness is `(mean(s2) - var(s1)) / (βN)`.
+"""
+function measure_twist_stiffness(cache::ComputeCache,
+                                 p::ModelParameters,
+                                 state::SimulationState;
+                                 Ax::Float64=1.0e-3)
+    if Ax <= 0
+        error("Ax must be positive")
+    end
+
+    S0 = fermion_logdet_action_from_eigs(cache.E_n, p.β)
+    H_twist = zeros(ComplexF64, 2 * p.N, 2 * p.N)
+    Splus = twisted_fermion_action!(H_twist, cache, p, state, +Ax)
+    Sminus = twisted_fermion_action!(H_twist, cache, p, state, -Ax)
+
+    s1 = (Splus - Sminus) / (2.0 * Ax)
+    s2 = (Splus + Sminus - 2.0 * S0) / (Ax * Ax)
+    rho_curv = s2 / (p.β * p.N)
+
+    return TwistStiffnessResult(Ax, S0, Splus, Sminus, s1, s2, rho_curv)
+end
+
+function _twist_qy_curvature(cache::ComputeCache,
+                             p::ModelParameters,
+                             state::SimulationState,
+                             H_twist::Matrix{ComplexF64},
+                             S0::Float64,
+                             Ax::Float64,
+                             qy::Float64,
+                             phase_shift::Float64)
+    Splus = twisted_fermion_action_qy!(H_twist, cache, p, state, +Ax, qy, phase_shift)
+    Sminus = twisted_fermion_action_qy!(H_twist, cache, p, state, -Ax, qy, phase_shift)
+    s2 = (Splus + Sminus - 2.0 * S0) / (Ax * Ax)
+    return s2 / (p.β * p.N)
+end
+
+function measure_kubo_diag_correction_qy(cache::ComputeCache,
+                                         p::ModelParameters;
+                                         qy::Float64=2π / p.Ly)
+    dim = 2 * p.N
+    β = p.β
+    U = cache.U
+    E = cache.E_n
+    Jx_sparse = current_operator_matrix(cache, p; qx=0.0, qy=qy)
+
+    mul!(cache.temp_JU, Jx_sparse, U)
+    mul!(cache.J_mn, U', cache.temp_JU)
+
+    Lambda_diag = 0.0
+    @inbounds for n in 1:dim
+        f_n = logistic(-β * E[n])
+        Lambda_diag += β * f_n * (1.0 - f_n) * abs2(cache.J_mn[n, n])
+    end
+
+    return Lambda_diag / p.N
+end
+
+"""
+    measure_twist_stiffness_qy(cache, p, state; Ax=1e-3, qy=2π/Ly)
+
+Compute a transverse finite-q twist curvature by averaging cosine and sine
+modulated vector potentials. This is a benchmark diagnostic for the qy Kubo
+stiffness stored in `Superfluid_Stiffness`; the Kubo path keeps its existing
+off-diagonal n != m convention.
+"""
+function measure_twist_stiffness_qy(cache::ComputeCache,
+                                    p::ModelParameters,
+                                    state::SimulationState;
+                                    Ax::Float64=1.0e-3,
+                                    qy::Float64=2π / p.Ly)
+    if Ax <= 0
+        error("Ax must be positive")
+    end
+
+    S0 = fermion_logdet_action_from_eigs(cache.E_n, p.β)
+    H_twist = zeros(ComplexF64, 2 * p.N, 2 * p.N)
+    rho_cos = _twist_qy_curvature(cache, p, state, H_twist, S0, Ax, qy, 0.0)
+    rho_sin = _twist_qy_curvature(cache, p, state, H_twist, S0, Ax, qy, -π / 2)
+    rho_avg = 0.5 * (rho_cos + rho_sin)
+    diag_correction = measure_kubo_diag_correction_qy(cache, p; qy=qy)
+    rho_offdiag_corrected = rho_avg + diag_correction
+
+    return TwistQyStiffnessResult(Ax, qy, rho_cos, rho_sin, rho_avg,
+                                  diag_correction, rho_offdiag_corrected)
+end
+
+"""
     measure_hole_concentration(cache::ComputeCache, p::ModelParameters)
 
 从当前 BdG 本征态计算空穴浓度 p_hole。
@@ -300,15 +460,10 @@ end
 # 1. 初始化辅助工具
 # ------------------------------------------------
 
-"""
-    build_current_operator!(cache::ComputeCache, p::ModelParameters; qx=0.0, qy=0.0, store=:q0)
-
-构建 x 方向电流算符的稀疏矩阵 Jx(q)。
-Jx(q) = i * sum ( t * c^dag_i c_{i+x} + t' * ... - h.c. ) * exp(i q·r_i)
-注意：q ≠ 0 时 Jx(q) 一般不再是 Hermitian。
-在 Nambu 表象下仍使用 blockdiag(Jx_part, Jx_part)，与现有公式保持一致。
-"""
-function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Float64=0.0, qy::Float64=0.0, store::Symbol=:q0)
+function current_operator_matrix(cache::ComputeCache,
+                                 p::ModelParameters;
+                                 qx::Float64=0.0,
+                                 qy::Float64=0.0)
     N = p.N
     x_idx = cache.x_idx
     y_idx = cache.y_idx
@@ -355,7 +510,19 @@ function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Fl
     # 构建完整的 2N x 2N Nambu 矩阵
     # J_BdG = [ Jx_part   0       ]
     #         [ 0         Jx_part ]
-    Jx_sparse = blockdiag(Jx_part, Jx_part)
+    return blockdiag(Jx_part, Jx_part)
+end
+
+"""
+    build_current_operator!(cache::ComputeCache, p::ModelParameters; qx=0.0, qy=0.0, store=:q0)
+
+构建 x 方向电流算符的稀疏矩阵 Jx(q)。
+Jx(q) = i * sum ( t * c^dag_i c_{i+x} + t' * ... - h.c. ) * exp(i q·r_i)
+注意：q ≠ 0 时 Jx(q) 一般不再是 Hermitian。
+在 Nambu 表象下仍使用 blockdiag(Jx_part, Jx_part)，与现有公式保持一致。
+"""
+function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Float64=0.0, qy::Float64=0.0, store::Symbol=:q0)
+    Jx_sparse = current_operator_matrix(cache, p; qx=qx, qy=qy)
 
     if store === :q0
         cache.Jx_sparse_q0 = Jx_sparse
@@ -433,7 +600,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     β = p.β
     U = cache.U
     E = cache.E_n
-    f = cache.fermi_factors # already updated in standard measure
+    f = cache.fermi_factors
     ω_grid = cache.omega_grid
     σ_ω = cache.sigma_omega
     dos_ω_grid = cache.dos_omega_grid
@@ -448,6 +615,11 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     parity_x = cache.parity_x
     parity_y = cache.parity_y
     omega_inv = cache.omega_inv
+
+    # Keep this measurement correct even when called without measure_observables first.
+    @inbounds @simd for n in 1:dim
+        f[n] = logistic(-β * E[n])
+    end
     
     # ------------------------------------------------
     # A. 计算电流矩阵元 J_mn(q) = <n|Jx(q)|m> (用于超流刚度)
@@ -668,13 +840,13 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     # 1/sqrt(N) factor in definition means |FFT|^2 / N.
 
     if reuse_buffers
-        return SpectrumResult(superfluid_stiffness, dc_cond, 
+        return SpectrumResult(superfluid_stiffness, dc_cond,
                               ω_grid, σ_ω, 
                               dos_ω_grid, dos_vals, dos_AN_vals, 
                               ak_map, ak_path)
     end
 
-    return SpectrumResult(superfluid_stiffness, dc_cond, 
+    return SpectrumResult(superfluid_stiffness, dc_cond,
                           copy(ω_grid), copy(σ_ω), 
                           copy(dos_ω_grid), copy(dos_vals), copy(dos_AN_vals), 
                           copy(ak_map), copy(ak_path))

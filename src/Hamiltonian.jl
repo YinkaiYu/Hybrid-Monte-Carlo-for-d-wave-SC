@@ -112,3 +112,149 @@ function diagonalize_H_BdG!(cache::ComputeCache, p::ModelParameters)
 
     return nothing
 end
+
+@inline function periodic_delta_1d(coord_i::Int, coord_j::Int, L::Int)::Int
+    d = coord_j - coord_i
+    if d > L / 2
+        d -= L
+    elseif d < -L / 2
+        d += L
+    end
+    return d
+end
+
+"""
+    build_twisted_H_BdG!(H, cache, p, state, Ax)
+
+Build H_BdG(Ax, Δ) in H with a per-link x-direction Peierls phase on hopping
+terms. Pairing terms follow update_H_BdG! exactly. This function does not
+modify cache.H_base, cache.E_n, or cache.U.
+"""
+function build_twisted_H_BdG!(H::Matrix{ComplexF64},
+                              cache::ComputeCache,
+                              p::ModelParameters,
+                              state::SimulationState,
+                              Ax::Float64)
+    N = p.N
+    fill!(H, 0.0 + 0.0im)
+
+    @inbounds for i in 1:N
+        term = state.disorder_pot[i] - state.μ_eff
+        H[i, i] = term
+        H[i + N, i + N] = -term
+    end
+
+    @inbounds for i in 1:N
+        xi = cache.x_idx[i]
+
+        for dir in 1:4
+            j = p.nn_table[i, dir]
+            if j > i
+                dx = periodic_delta_1d(xi, cache.x_idx[j], p.Lx)
+                phase = cis(Ax * dx)
+                H[i, j] = -p.t * phase
+                H[i + N, j + N] = p.t * conj(phase)
+            end
+        end
+
+        for dir in 1:4
+            j = p.nnn_table[i, dir]
+            if j > i
+                dx = periodic_delta_1d(xi, cache.x_idx[j], p.Lx)
+                phase = cis(Ax * dx)
+                H[i, j] = -p.tp * phase
+                H[i + N, j + N] = p.tp * conj(phase)
+            end
+        end
+    end
+
+    @inbounds for i in 1:N
+        j_x = p.nn_table[i, 1]
+        val_x = state.Δ[i, 1]
+        H[i, j_x + N] = val_x
+        H[j_x, i + N] = val_x
+
+        j_y = p.nn_table[i, 2]
+        val_y = state.Δ[i, 2]
+        H[i, j_y + N] = val_y
+        H[j_y, i + N] = val_y
+    end
+
+    return nothing
+end
+
+@inline function set_hermitian_pair!(H::Matrix{ComplexF64},
+                                    row::Int,
+                                    col::Int,
+                                    val::ComplexF64)
+    if row <= col
+        H[row, col] = val
+    else
+        H[col, row] = conj(val)
+    end
+    return nothing
+end
+
+@inline function add_oriented_hopping!(H::Matrix{ComplexF64},
+                                      N::Int,
+                                      i::Int,
+                                      j::Int,
+                                      tij::Float64,
+                                      phase::ComplexF64)
+    set_hermitian_pair!(H, i, j, -tij * phase)
+    set_hermitian_pair!(H, i + N, j + N, tij * conj(phase))
+    return nothing
+end
+
+"""
+    build_twisted_H_BdG_qy!(H, cache, p, state, Ax, qy, phase_shift)
+
+Build H_BdG with a transverse finite-q vector potential on x-directed bonds:
+`A_x(y) = sqrt(2) * Ax * cos(qy * (y - 1) + phase_shift)`.
+Using `phase_shift=0` and `phase_shift=-π/2` gives the cosine and sine
+partners used to benchmark the current-current response at qy.
+"""
+function build_twisted_H_BdG_qy!(H::Matrix{ComplexF64},
+                                 cache::ComputeCache,
+                                 p::ModelParameters,
+                                 state::SimulationState,
+                                 Ax::Float64,
+                                 qy::Float64,
+                                 phase_shift::Float64)
+    N = p.N
+    fill!(H, 0.0 + 0.0im)
+
+    @inbounds for i in 1:N
+        term = state.disorder_pot[i] - state.μ_eff
+        H[i, i] = term
+        H[i + N, i + N] = -term
+    end
+
+    @inbounds for i in 1:N
+        # y-directed nearest-neighbor hopping is not coupled to A_x.
+        add_oriented_hopping!(H, N, i, p.nn_table[i, 2], p.t, 1.0 + 0.0im)
+
+        y = cache.y_idx[i] - 1
+        local_Ax = sqrt(2.0) * Ax * cos(qy * y + phase_shift)
+        phase = cis(local_Ax)
+
+        # Match build_current_operator!: +x, +x+y, and +x-y oriented bonds.
+        add_oriented_hopping!(H, N, i, p.nn_table[i, 1], p.t, phase)
+        add_oriented_hopping!(H, N, i, p.nnn_table[i, 1], p.tp, phase)
+        add_oriented_hopping!(H, N, i, p.nnn_table[i, 4], p.tp, phase)
+    end
+
+    @inbounds for i in 1:N
+        j_x = p.nn_table[i, 1]
+        val_x = state.Δ[i, 1]
+        H[i, j_x + N] = val_x
+        H[j_x, i + N] = val_x
+
+        j_y = p.nn_table[i, 2]
+        val_y = state.Δ[i, 2]
+        H[i, j_y + N] = val_y
+        H[j_y, i + N] = val_y
+    end
+
+    return nothing
+end

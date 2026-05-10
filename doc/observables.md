@@ -71,19 +71,105 @@ $$\braket{c_{i,\uparrow}^\dagger c_{j,\uparrow}}+\braket{c_{i,\downarrow}^\dagge
 
 ### 超流刚度
 
-定义超流刚度：
+正式计算和文献对比时，本文档中的超流刚度指 Meissner stiffness 的静态横向响应：
 $$
 \rho_s=\braket{-K_x}-\Lambda_{xx}(q_x=0,q_y\to0,\omega=0)
 $$
+这里电流方向为 $x$，横向动量沿 $y$。在有限尺寸 $L_x\times L_y$ 周期格子上，程序使用最小非零横向动量
+$$
+q_x=0,\qquad q_y=\frac{2\pi}{L_y}.
+$$
+这与 Scalapino--White--Zhang、Xiang--Wheatley 以及相关 finite-size BdG 文献中的 Meissner stiffness 定义一致。直接取 $q=0$ 对应的是 uniform twist / flux response，是另一个有限尺寸 estimator，不能和这个 transverse estimator 逐构型混用。
+
 其中抗磁项：
 $$\braket{-K_x}=\frac1N\sum_{i,\sigma}\left[\,t\braket{c_{i,\sigma}^\dagger c_{i+\hat{x},\sigma}}\,+\,t'\braket{c_{i,\sigma}^\dagger c_{i+\hat{x}+\hat{y},\sigma}}\,+\,t'\braket{c_{i,\sigma}^\dagger c_{i+\hat{x}-\hat{y},\sigma}}\,+\text{h.c.}\,\right]$$
 流流关联（顺磁项）：
 $$\Lambda_{xx}(q,\omega=0) = \frac{1}{N} \sum_{n\ne m}^{2N} \frac{f(E_n) - f(E_m)}{E_m - E_n} |J^x_{nm}(q)|^2$$
 $$J^x_{nm}(q)=\bra{n}J^x(q)\ket{m}\,,\quad J^x(q)=\text{i}\,\sum_{i,\sigma}\left[\,t\,c_{i,\sigma}^\dagger c_{i+\hat{x},\sigma}\,+\,t'\,c_{i,\sigma}^\dagger c_{i+\hat{x}+\hat{y},\sigma}\,+\,t'\,c_{i,\sigma}^\dagger c_{i+\hat{x}-\hat{y},\sigma}\,-\text{h.c.}\,\right] \text{e}^{\text{i} q \cdot r_i}$$
-数值上，在计算超流刚度顺磁项时，取 $q_x=0, q_y=\frac{2\pi}{L_y}$ .
 
-在具体的程序计算中，抗磁项可以直接显示手写循环来算。而顺磁项需要定义稀疏矩阵用 `BLAS` 来做稀疏矩阵乘法。此外，当 $E_m\approx E_n$ 时还需注意数值稳定性： 
+在具体的程序计算中，抗磁项可以直接显式手写循环来算。顺磁项使用稀疏电流矩阵和 `BLAS` 计算矩阵元。正式的 finite-$q_y$ Kubo 求和显式跳过严格的 $m=n$ 项；但对于 $m\ne n$ 的近简并本征态，仍需使用稳定极限：
 $$ \lim_{E_m \to E_n} \frac{f(E_n) - f(E_m)}{E_m - E_n} = -f'(E_n) =\beta f(E_n) [1 - f(E_n)]$$
+
+也就是说，正式输出 `Superfluid_Stiffness` 的定义是：
+$$
+\rho_s^{T}(L)=
+\braket{-K_x}-
+\Lambda_{xx}\left(q_x=0,q_y=\frac{2\pi}{L_y},\omega=0\right),
+\qquad
+\Lambda_{xx}:\sum_{m\ne n}.
+$$
+这里 $T$ 表示 transverse response。做论文级有限尺寸分析时，应以这个量为准，并在需要时随 $L_y$ 做 $q_y\to0$ 外推。
+
+### Twist 自由能差分 benchmark
+
+除了正式 Kubo 公式，也可以对 Peierls twist 后的 BdG 自由能做有限差分，作为数值 benchmark。这个测量需要额外对角化，生产运行中默认不打开；在 `run_simulation` 中需显式设置 `measure_twist=true`。
+
+单构型的费米子有效作用量取为
+$$
+S_f(A)=-\sum_{E_n(A)>0}\left[\beta E_n(A)+2\log\left(1+e^{-\beta E_n(A)}\right)\right].
+$$
+对固定辅助场构型的 uniform twist，可定义
+$$
+s_1=\frac{S_f(A)-S_f(-A)}{2A},\qquad
+s_2=\frac{S_f(A)+S_f(-A)-2S_f(0)}{A^2},
+$$
+单构型曲率为
+$$
+\rho_{\mathrm{twist,curv}}=\frac{s_2}{\beta N}.
+$$
+如果要从 twist 自由能得到 ensemble estimator，需要在采样后用
+$$
+\rho_{\mathrm{twist,full}}=
+\frac{\overline{s_2}-\left(\overline{s_1^2}-\overline{s_1}^2\right)}{\beta N}.
+$$
+
+如果要验证 uniform twist 的有限差分实现，应和 $q=0$ 的静态 Kubo 曲率比较，并包含 $m=n$ 极限项：
+$$
+\Lambda^{\mathrm{static}}_{xx}(q=0)=
+\frac{1}{N}\sum_{m,n}R_{mn}|J^x_{nm}(0)|^2,
+$$
+其中
+$$
+R_{mn}=
+\begin{cases}
+\dfrac{f(E_n)-f(E_m)}{E_m-E_n},&E_m\ne E_n,\\[0.8em]
+\beta f(E_n)\left[1-f(E_n)\right],&E_m=E_n.
+\end{cases}
+$$
+这个 $m=n$ 项来自能级移动导致的 occupation response，有限差分自由能曲率会自动包含它。因此，uniform twist 不应拿来和正式的 finite-$q_y$、$m\ne n$ Kubo stiffness 逐构型比较。
+
+为了做 finite-$q_y$ 层面的调试，可以使用横向调制的 x 方向矢势
+$$
+A_x(y)=\sqrt{2}A\cos\left(q_y(y-1)+\phi\right),
+\qquad q_y=\frac{2\pi}{L_y}.
+$$
+分别取 $\phi=0$ 和 $\phi=-\pi/2$ 得到 cosine/sine 两个曲率，再取平均：
+$$
+\rho_{\mathrm{twist},q_y}=\frac12\left(\rho_{\cos}+\rho_{\sin}\right).
+$$
+这对应 `transport.csv` 中显式打开 `measure_twist=true` 后输出的
+`Twist_Qy`、`Twist_Qy_Rho_Curv_Cos`、`Twist_Qy_Rho_Curv_Sin`、`Twist_Qy_Rho_Curv_Avg`。
+
+有限差分 twist 曲率是自由能的 full curvature，会包含与严格 $m=n$ 极限相对应的对角响应。因此：
+
+| 名称 | 动量 | 严格 $m=n$ 项 | 用途 |
+| --- | --- | --- | --- |
+| `Superfluid_Stiffness` | $q_x=0,\ q_y=2\pi/L_y$ | 跳过；保留 $m\ne n$ 近简并极限 | 正式 finite-size Meissner stiffness，与文献对比 |
+| `Twist_Qy_Rho_Curv_Avg` | 横向调制 $q_y=2\pi/L_y$ | 有限差分自动包含 | 调试 full curvature；可和包含 $m=n$ 的 Kubo 诊断量比较 |
+| uniform twist curvature | $q=0$ uniform flux | 有限差分自动包含 | 调试 helicity/twist stiffness；可和 $q=0$ 且包含 $m=n$ 的静态 Kubo 比较 |
+
+如果需要把 twist 结果画到正式 `Superfluid_Stiffness` 的同一张图上，应明确标注它是 full curvature 或做对角项修正。对 finite-$q_y$ 的情况，若
+$$
+\Lambda_{\mathrm{diag}}(q_y)=
+\frac{1}{N}\sum_n \beta f(E_n)\left[1-f(E_n)\right]|J^x_{nn}(q_y)|^2,
+$$
+则可构造调试量
+$$
+\rho_{\mathrm{twist,offdiag}}=
+\rho_{\mathrm{twist},q_y}+\Lambda_{\mathrm{diag}}(q_y),
+$$
+用于和 `Superfluid_Stiffness` 的 $m\ne n$ Kubo 定义做逐构型对比。这个量只是诊断工具，不作为正式 observable。
+对应的 CSV 列为 `Twist_Qy_Lambda_Diag` 和 `Twist_Qy_Rho_OffdiagCorrected`。
 
 ### 光电导与直流电导
 

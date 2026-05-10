@@ -26,6 +26,11 @@
 - Randomized simulations should set seeds when feasible for reproducibility (`Random.seed!`).
 - When adding new scripts, include a tiny sanity check (e.g., small lattice run) and point outputs to a dedicated subfolder in `data/`.
 
+## Reporting Guidelines
+- One-off HTML reports made after a development milestone for collaborator discussion or progress updates should live directly under their `data/<report_name>/` output directory, usually as `index.html`.
+- Write these one-off reports in Chinese. Render formulas with LaTeX in the HTML, for example via MathJax, instead of leaving formulas as plain text.
+- Do not commit one-off report generation scripts or temporary plotting helpers unless they are intended to become reusable project tooling.
+
 ## Commit & Pull Request Guidelines
 - Follow the existing short, action-first messages (often in Chinese), e.g., “完善结构体，去掉了dt” / “添加超流刚度等可观测量”.
 - In PRs, describe physics parameters, lattice sizes, and any new output paths; attach small plots or CSV snippets if behavior changes.

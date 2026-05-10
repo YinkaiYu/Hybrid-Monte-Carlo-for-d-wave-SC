@@ -125,10 +125,13 @@ end
     run_simulation(p::ModelParameters, out_dir::String; 
                    n_therm::Int=100, 
                    n_measure::Int=500, 
-                   Nt_therm_init::Int=10, 
+                   Nt_therm_init::Int=10,
                    Nt_measure::Int=5,
-                   measure_transport_freq::Int=10,
-                   bin_size::Int=5)
+                   measure_transport_freq::Int=1,
+                   bin_size::Int=5,
+                   measure_twist::Bool=false,
+                   twist_Ax::Float64=1e-3,
+                   twist_qy::Float64=2π/p.Ly)
 
 运行完整的 HMC 模拟。
 
@@ -138,6 +141,9 @@ end
 - `Nt_therm_init`: 热化初始 Leapfrog 步数
 - `measure_transport_freq`: 每隔多少个 MC 步进行一次重量级测量（输运/谱）
 - `bin_size`: 谱学数据分箱大小。即累积 `bin_size` 次测量后，求平均并存入 JLD2 一次。
+- `measure_twist`: 是否额外计算 twist benchmark；默认关闭，避免额外对角化
+- `twist_Ax`: twist 有限差分步长
+- `twist_qy`: 横向调制 twist 的动量，默认 `2π/Ly`
 """
 function run_simulation(p::ModelParameters, out_dir::String; 
                         n_therm::Int=100, 
@@ -146,6 +152,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
                         Nt_measure::Int=5,
                         measure_transport_freq::Int=1,
                         bin_size::Int=5,
+                        measure_twist::Bool=false,
+                        twist_Ax::Float64=1.0e-3,
+                        twist_qy::Float64=2π / p.Ly,
                         verbose::Bool=true)
     
     # --- 1. 环境准备 ---
@@ -179,7 +188,11 @@ function run_simulation(p::ModelParameters, out_dir::String;
     # 基础物理量
     println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair,D2,D4,Avg_d2,Avg_d4,S_L2_L2,S_L2_0,S_1_0,F_0_0")
     # 输运标量
-    println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
+    if measure_twist
+        println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity,Twist_Qy,Twist_Qy_Rho_Curv_Cos,Twist_Qy_Rho_Curv_Sin,Twist_Qy_Rho_Curv_Avg,Twist_Qy_Lambda_Diag,Twist_Qy_Rho_OffdiagCorrected")
+    else
+        println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
+    end
     
     tee_println("Starting Simulation...")
     tee_println("System: $(p.Lx)x$(p.Ly), β=$(p.β), V=$(p.V), W=$(p.W), n_imp=$(p.n_imp)")
@@ -317,8 +330,23 @@ function run_simulation(p::ModelParameters, out_dir::String;
             spec_res = measure_transport_and_spectra(cache, p; reuse_buffers=true)
             
             # A. 写入 Transport CSV (Scalars)
-            line_trans = @sprintf("%d,%.6e,%.6e\n", 
-                                  i, spec_res.superfluid_stiffness, spec_res.dc_conductivity)
+            if measure_twist
+                twist_qy_res = measure_twist_stiffness_qy(cache, p, state;
+                                                          Ax=twist_Ax, qy=twist_qy)
+                line_trans = @sprintf("%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n",
+                                      i, spec_res.superfluid_stiffness,
+                                      spec_res.dc_conductivity,
+                                      twist_qy_res.qy,
+                                      twist_qy_res.rho_curvature_cos,
+                                      twist_qy_res.rho_curvature_sin,
+                                      twist_qy_res.rho_curvature_avg,
+                                      twist_qy_res.diag_correction,
+                                      twist_qy_res.rho_offdiag_corrected)
+            else
+                line_trans = @sprintf("%d,%.6e,%.6e\n",
+                                      i, spec_res.superfluid_stiffness,
+                                      spec_res.dc_conductivity)
+            end
             write(f_trans, line_trans)
             flush(f_trans)
             
