@@ -588,13 +588,27 @@ struct SpectrumResult
     A_kpath::Matrix{Float64} # (π,0) -> (π,π) 路径上的 A(k, ω)
 end
 
+struct TransportResult
+    superfluid_stiffness::Float64
+    dc_conductivity::Float64
+    ω_grid::Vector{Float64}
+    optical_conductivity::Vector{Float64}
+end
+
+struct SpectraOnlyResult
+    dos_ω_grid::Vector{Float64}
+    dos::Vector{Float64}
+    dos_AN::Vector{Float64}
+    A_k_ω0::Matrix{Float64}
+    A_kpath::Matrix{Float64}
+end
+
 # ------------------------------------------------
 # 3. 核心测量函数
 # ------------------------------------------------
 
-function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
+function measure_transport_only(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
     N = p.N
-    Lx = p.Lx
     Ly = p.Ly
     dim = 2 * N
     β = p.β
@@ -603,17 +617,6 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     f = cache.fermi_factors
     ω_grid = cache.omega_grid
     σ_ω = cache.sigma_omega
-    dos_ω_grid = cache.dos_omega_grid
-    dos_vals = cache.dos_vals
-    dos_AN_vals = cache.dos_AN_vals
-    ak_map = cache.ak_map
-    ak_path = cache.ak_path
-    lor_cache = cache.lor_cache
-    kpath_weights = cache.kpath_weights
-    x_idx = cache.x_idx
-    y_idx = cache.y_idx
-    parity_x = cache.parity_x
-    parity_y = cache.parity_y
     omega_inv = cache.omega_inv
 
     # Keep this measurement correct even when called without measure_observables first.
@@ -737,6 +740,36 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     
     dc_cond *= (π / N)
     σ_ω .*= (π / N)
+
+    if reuse_buffers
+        return TransportResult(superfluid_stiffness, dc_cond, ω_grid, σ_ω)
+    end
+
+    return TransportResult(superfluid_stiffness, dc_cond, copy(ω_grid), copy(σ_ω))
+end
+
+function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
+    N = p.N
+    Lx = p.Lx
+    Ly = p.Ly
+    dim = 2 * N
+    U = cache.U
+    E = cache.E_n
+    dos_ω_grid = cache.dos_omega_grid
+    dos_vals = cache.dos_vals
+    dos_AN_vals = cache.dos_AN_vals
+    ak_map = cache.ak_map
+    ak_path = cache.ak_path
+    lor_cache = cache.lor_cache
+    kpath_weights = cache.kpath_weights
+    x_idx = cache.x_idx
+    y_idx = cache.y_idx
+    parity_x = cache.parity_x
+    parity_y = cache.parity_y
+
+    function lorentzian(x, η)
+        return (1.0/π) * (η / (x^2 + η^2))
+    end
     
     # ------------------------------------------------
     # D. 态密度 (DOS) & 谱函数
@@ -840,14 +873,24 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
     # 1/sqrt(N) factor in definition means |FFT|^2 / N.
 
     if reuse_buffers
-        return SpectrumResult(superfluid_stiffness, dc_cond,
-                              ω_grid, σ_ω, 
-                              dos_ω_grid, dos_vals, dos_AN_vals, 
-                              ak_map, ak_path)
+        return SpectraOnlyResult(dos_ω_grid, dos_vals, dos_AN_vals, ak_map, ak_path)
     end
 
-    return SpectrumResult(superfluid_stiffness, dc_cond,
-                          copy(ω_grid), copy(σ_ω), 
-                          copy(dos_ω_grid), copy(dos_vals), copy(dos_AN_vals), 
-                          copy(ak_map), copy(ak_path))
+    return SpectraOnlyResult(copy(dos_ω_grid), copy(dos_vals), copy(dos_AN_vals),
+                             copy(ak_map), copy(ak_path))
+end
+
+function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
+    transport = measure_transport_only(cache, p; reuse_buffers=reuse_buffers)
+    spectra = measure_untwisted_spectra(cache, p; reuse_buffers=reuse_buffers)
+
+    return SpectrumResult(transport.superfluid_stiffness,
+                          transport.dc_conductivity,
+                          transport.ω_grid,
+                          transport.optical_conductivity,
+                          spectra.dos_ω_grid,
+                          spectra.dos,
+                          spectra.dos_AN,
+                          spectra.A_k_ω0,
+                          spectra.A_kpath)
 end

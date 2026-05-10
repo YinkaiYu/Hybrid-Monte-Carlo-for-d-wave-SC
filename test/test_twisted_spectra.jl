@@ -230,6 +230,25 @@ end
     end
 end
 
+@testset "Transport and spectra helper recomposition" begin
+    p, _, cache = setup_tbc_fixture()
+
+    combined = measure_transport_and_spectra(cache, p; reuse_buffers=false)
+    transport = DwaveHMC.measure_transport_only(cache, p; reuse_buffers=false)
+    spectra = DwaveHMC.measure_untwisted_spectra(cache, p; reuse_buffers=false)
+
+    @test combined.superfluid_stiffness ≈ transport.superfluid_stiffness
+    @test combined.dc_conductivity ≈ transport.dc_conductivity
+    @test combined.ω_grid == transport.ω_grid
+    @test combined.optical_conductivity ≈ transport.optical_conductivity
+
+    @test combined.dos_ω_grid == spectra.dos_ω_grid
+    @test combined.dos ≈ spectra.dos
+    @test combined.dos_AN ≈ spectra.dos_AN
+    @test combined.A_k_ω0 ≈ spectra.A_k_ω0
+    @test combined.A_kpath ≈ spectra.A_kpath
+end
+
 @testset "Twisted spectra measurement" begin
     p, state, cache = setup_tbc_fixture()
 
