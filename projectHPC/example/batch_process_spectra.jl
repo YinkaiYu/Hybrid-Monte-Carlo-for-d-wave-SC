@@ -9,6 +9,7 @@ target_dir = @__DIR__
 const SPECTRA_OUTPUT_FILES = [
     "spectra_opt_cond.csv",
     "spectra_dos.csv",
+    "spectra_dos_M.csv",
     "spectra_dos_M_patch.csv",
     "spectra_ak0.csv",
     "spectra_MX_path.csv",
@@ -246,6 +247,9 @@ function process_T_directory(dir_path)
                     final_dos_M[i], err_dos_M[i])
         end
     end
+    write_series_csv(joinpath(dir_path, "spectra_dos_M.csv"),
+                     "omega,DOS_M,Error", dos_omega_grid,
+                     final_dos_M, err_dos_M)
 
     if length(samples_dos_M_patch) == real_n
         final_dos_M_patch, err_dos_M_patch = calc_stats(samples_dos_M_patch)

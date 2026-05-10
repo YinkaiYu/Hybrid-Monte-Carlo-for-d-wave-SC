@@ -53,13 +53,21 @@ include(params_path)
 println("Parameters loaded. T = $(T), Total Configs = $(N_conf)")
 flush(stdout)
 
+println("Spectra options: use_twisted_spectra=$(use_twisted_spectra), spectra_Ltw=$(spectra_Ltw), spectra_eta=$(spectra_eta), spectra_delta_omega=$(spectra_delta_omega)")
+println("Twist stiffness options: measure_twist=$(measure_twist), twist_Ax=$(twist_Ax), twist_qy=$(twist_qy)")
+flush(stdout)
+
 # ---------------------------------------------------------
 # 4. Worker 任务 (带静默模式)
 # ---------------------------------------------------------
 @everywhere function worker_task(seed::Int, p_base::ModelParameters, 
                                  n_therm, n_measure, 
                                  Nt_therm_init, Nt_measure, 
-                                 measure_transport_freq, bin_size)
+                                 measure_transport_freq, bin_size,
+                                 spectra_Ltw, use_twisted_spectra,
+                                 m_point_patch_half_width,
+                                 spectra_eta, spectra_delta_omega,
+                                 measure_twist, twist_Ax, twist_qy)
     out_dir = "conf_$(seed)"
     Random.seed!(seed)
     
@@ -76,6 +84,14 @@ flush(stdout)
                        Nt_measure=Nt_measure,
                        measure_transport_freq=measure_transport_freq,
                        bin_size=bin_size,
+                       spectra_Ltw=spectra_Ltw,
+                       use_twisted_spectra=use_twisted_spectra,
+                       m_point_patch_half_width=m_point_patch_half_width,
+                       spectra_eta=spectra_eta,
+                       spectra_delta_omega=spectra_delta_omega,
+                       measure_twist=measure_twist,
+                       twist_Ax=twist_Ax,
+                       twist_qy=twist_qy,
                        verbose=false) 
         
         return true
@@ -92,7 +108,11 @@ results = pmap(1:N_conf) do seed
     worker_task(seed, p, 
                 n_therm, n_measure, 
                 Nt_therm_init, Nt_measure, 
-                measure_transport_freq, bin_size)
+                measure_transport_freq, bin_size,
+                spectra_Ltw, use_twisted_spectra,
+                m_point_patch_half_width,
+                spectra_eta, spectra_delta_omega,
+                measure_twist, twist_Ax, twist_qy)
 end
 
 success_count = count(results)

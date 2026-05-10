@@ -3,41 +3,47 @@ set -e
 
 # ================= 配置区域 =================
 # 1. 扫描参数
-T_list=(0.001 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.15 0.2)
+T_list=(0.005 0.010 0.015 0.020 0.025 0.030 0.035 0.040 0.045 0.050 \
+        0.055 0.060 0.065 0.070 0.075 0.080 0.085 0.090 0.095 0.100)
 
 # 2. 并行与作业参数
 queue='fat6348'
 N_NODES=1   # 每个作业申请多少个节点
-N_CORES=4   # 每个作业申请多少个核
+N_CORES=8   # 每个作业申请多少个核；run_conf.jl 会启动同数量 worker
 N_CONFS=8   # 每个温度跑多少个构型
 PROJECT_ROOT=/home/zxli_1/yyk2025/2511_dWaveBcs/20251231_sweep-T
 
 # 3. 物理参数
 L=20
 t=1.0
-tp=-0.35
+tp=-0.3
 # 模式开关: 1=目标密度n(热化调μ), 0=固定μ
-USE_TARGET_N=1
+USE_TARGET_N=0
 # 目标密度模式
 target_n=0.85
-mu_init=-1.23359
+mu_init=-0.83
 # 固定化学势模式
-mu=-1.23359
+mu=-0.83
 W=0.0
 n_imp=0.0
-V=0.8
+V=0.5
 mass=1.0
 
 # 4. 测量参数
 omega_max=0.8
+spectra_Ltw=8
+use_twisted_spectra=true
+measure_twist=true
+twist_Ax=0.001
 
 # 5. HMC参数
-n_therm=50
-n_measure=200
+n_therm=200
+n_measure=1000
 Nt_therm_init=26
 Nt_measure=8
 measure_transport_freq=1
-bin_size=5
+# TBC path spectra are large at Ltw=8; keep the same measurements but write fewer bins.
+bin_size=50
 
 # 6. 目标密度模式下的 μ 求根参数（hybrid: secant + bracket）
 mu_tune_gain=0.5
@@ -71,6 +77,14 @@ T = $T
 η = 8.0 / (Lx * Ly)
 Δω = 0.2 * η
 ω_max = $omega_max
+spectra_Ltw = $spectra_Ltw
+use_twisted_spectra = $use_twisted_spectra
+spectra_eta = η / spectra_Ltw^2
+spectra_delta_omega = Δω / spectra_Ltw^2
+m_point_patch_half_width = π / max(Lx, Ly)
+measure_twist = $measure_twist
+twist_Ax = $twist_Ax
+twist_qy = 2π / Ly
 n_therm = $n_therm
 n_measure = $n_measure
 Nt_therm_init = $Nt_therm_init
@@ -126,6 +140,8 @@ EOF
 #SBATCH -e job.err
 export LD_LIBRARY_PATH=""
 export MKL_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
 export JULIA_NUM_THREADS=1
 julia --project="$PROJECT_ROOT" "$PROJECT_ROOT"/run_conf.jl
 EOF

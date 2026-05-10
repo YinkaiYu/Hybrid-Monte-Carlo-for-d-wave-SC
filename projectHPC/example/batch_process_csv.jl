@@ -70,6 +70,13 @@ function parse_params(param_file)
     return data
 end
 
+function push_observable!(obs_dict, key::String, value)
+    if !haskey(obs_dict, key)
+        obs_dict[key] = Float64[]
+    end
+    push!(obs_dict[key], Float64(value))
+end
+
 # --- 3. 主程序 ---
 println("Starting Robust T-scan CSV processing...")
 
@@ -109,8 +116,7 @@ for t_dir in T_dirs
             for (k, v) in zip(names, vals)
                 key = string(k)
                 conf_map[key] = v
-                if !haskey(obs_dict, key) obs_dict[key] = Float64[] end
-                push!(obs_dict[key], v)
+                push_observable!(obs_dict, key, v)
             end
 
             # Binder ratios from per-conf means
@@ -118,16 +124,14 @@ for t_dir in T_dirs
                 d2 = conf_map["D2"]
                 if d2 > 0
                     b_global = 1.0 - conf_map["D4"] / (2.0 * d2 * d2)
-                    if !haskey(obs_dict, "B_global") obs_dict["B_global"] = Float64[] end
-                    push!(obs_dict["B_global"], b_global)
+                    push_observable!(obs_dict, "B_global", b_global)
                 end
             end
             if haskey(conf_map, "Avg_d2") && haskey(conf_map, "Avg_d4")
                 sd2 = conf_map["Avg_d2"]
                 if sd2 > 0
                     b_local = 1.0 - conf_map["Avg_d4"] / (2.0 * sd2 * sd2)
-                    if !haskey(obs_dict, "B_local") obs_dict["B_local"] = Float64[] end
-                    push!(obs_dict["B_local"], b_local)
+                    push_observable!(obs_dict, "B_local", b_local)
                 end
             end
             
@@ -136,8 +140,14 @@ for t_dir in T_dirs
             if t_names !== nothing
                 for (k, v) in zip(t_names, t_vals)
                     key = string(k)
-                    if !haskey(obs_dict, key) obs_dict[key] = Float64[] end
-                    push!(obs_dict[key], v)
+                    push_observable!(obs_dict, key, v)
+                    if key == "Superfluid_Stiffness"
+                        push_observable!(obs_dict, "Stiffness_Kubo", v)
+                    elseif key == "Twist_Qy_Rho_Curv_Avg"
+                        push_observable!(obs_dict, "Stiffness_TwistRaw", v)
+                    elseif key == "Twist_Qy_Rho_OffdiagCorrected"
+                        push_observable!(obs_dict, "Stiffness_Twist", v)
+                    end
                 end
             end
         end
@@ -179,7 +189,9 @@ param_keys = sort(collect(filter(k -> !endswith(k, "_mean") && !endswith(k, "_er
 data_keys = sort(collect(filter(k -> endswith(k, "_mean") || endswith(k, "_err"), all_keys)))
 
 # 调整列顺序
-priority = ["T", "beta", "n_imp", "real_n_conf"]
+priority = ["T", "β", "Lx", "Ly", "spectra_Ltw", "use_twisted_spectra",
+            "measure_twist", "t", "tp", "μ", "target_n", "mu_init",
+            "W", "n_imp", "V", "mass", "real_n_conf"]
 final_params = filter(k -> k in priority, param_keys)
 append!(final_params, filter(k -> !(k in priority), param_keys))
 final_header = vcat(final_params, data_keys)
