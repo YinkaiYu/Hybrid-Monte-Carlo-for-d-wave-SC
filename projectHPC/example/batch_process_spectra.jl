@@ -138,10 +138,128 @@ function resolve_ak_dims(final_ak, Lx_eff, Ly_eff; source="")
     return Lx_eff, Ly_eff
 end
 
+const SPECTRA_OUTPUT_FILES = [
+    "spectra_opt_cond.csv",
+    "spectra_dos.csv",
+    "spectra_dos_AN_patch.csv",
+    "spectra_ak0.csv",
+    "spectra_akpath.csv",
+]
+
+function remove_spectra_outputs!(dir_path)
+    for filename in SPECTRA_OUTPUT_FILES
+        rm(joinpath(dir_path, filename); force=true)
+    end
+end
+
+function resolved_output_grids(res)
+    p = res.params
+    meta = res.meta
+    omega_grid = haskey(meta, "omega_grid") ? collect(meta["omega_grid"]) :
+                 collect(p.ω_min : p.Δω : p.ω_max)
+    dos_omega_grid = haskey(meta, "dos_omega_grid") ? collect(meta["dos_omega_grid"]) :
+                     collect(-p.ω_max : p.Δω : p.ω_max)
+
+    if length(omega_grid) != length(res.opt)
+        omega_grid = collect(range(p.ω_min, stop=p.ω_max, length=length(res.opt)))
+    end
+    if length(dos_omega_grid) != length(res.dos)
+        dos_omega_grid = collect(range(-p.ω_max, stop=p.ω_max, length=length(res.dos)))
+    end
+
+    return omega_grid, dos_omega_grid
+end
+
+function resolved_kpath_signature(res)
+    if res.akpath === nothing
+        return (present=false, shape=nothing, kx=nothing, ky=nothing, ky_idx=nothing)
+    end
+
+    meta = res.meta
+    kx_val = haskey(meta, "kpath_kx") ? meta["kpath_kx"] : nothing
+    ky_vals = haskey(meta, "kpath_ky") ? meta["kpath_ky"] : nothing
+    ky_indices = haskey(meta, "kpath_ky_idx") ? meta["kpath_ky_idx"] : nothing
+
+    if kx_val === nothing || ky_vals === nothing
+        _, ky_indices_fallback, kx_val_fallback, ky_vals_fallback = DwaveHMC.antinode_kpath(res.params)
+        kx_val = kx_val === nothing ? kx_val_fallback : kx_val
+        ky_vals = ky_vals === nothing ? ky_vals_fallback : ky_vals
+        ky_indices = ky_indices === nothing ? ky_indices_fallback : ky_indices
+    end
+    if ky_indices === nothing
+        ky_indices = collect(1:length(ky_vals))
+    end
+
+    return (present=true,
+            shape=size(res.akpath),
+            kx=kx_val,
+            ky=collect(ky_vals),
+            ky_idx=collect(ky_indices))
+end
+
+function compatibility_signature(res)
+    omega_grid, dos_omega_grid = resolved_output_grids(res)
+    meta = res.meta
+    return (
+        omega_grid=omega_grid,
+        dos_omega_grid=dos_omega_grid,
+        spectra_Lx_eff=Int(get(meta, "spectra_Lx_eff", res.params.Lx)),
+        spectra_Ly_eff=Int(get(meta, "spectra_Ly_eff", res.params.Ly)),
+        opt_size=size(res.opt),
+        dos_size=size(res.dos),
+        dos_AN_size=size(res.dos_AN),
+        ak0_size=size(res.ak0),
+        dos_AN_patch_size=res.dos_AN_patch === nothing ? nothing : size(res.dos_AN_patch),
+        kpath=resolved_kpath_signature(res),
+    )
+end
+
+function same_metadata_value(a, b)
+    if a === nothing || b === nothing
+        return a === nothing && b === nothing
+    elseif a isa AbstractArray || b isa AbstractArray
+        return a isa AbstractArray && b isa AbstractArray && size(a) == size(b) && a == b
+    else
+        return isequal(a, b)
+    end
+end
+
+function compatibility_mismatches(reference, candidate)
+    mismatches = String[]
+
+    for field in (:omega_grid, :dos_omega_grid, :spectra_Lx_eff, :spectra_Ly_eff,
+                  :opt_size, :dos_size, :dos_AN_size, :ak0_size)
+        if !same_metadata_value(getfield(reference, field), getfield(candidate, field))
+            push!(mismatches, String(field))
+        end
+    end
+
+    if reference.dos_AN_patch_size !== nothing && candidate.dos_AN_patch_size !== nothing &&
+       !same_metadata_value(reference.dos_AN_patch_size, candidate.dos_AN_patch_size)
+        push!(mismatches, "dos_AN_patch_size")
+    end
+
+    if reference.kpath.present != candidate.kpath.present
+        push!(mismatches, "A_kpath_presence")
+    elseif reference.kpath.present
+        for field in (:shape, :kx, :ky, :ky_idx)
+            if !same_metadata_value(getfield(reference.kpath, field), getfield(candidate.kpath, field))
+                push!(mismatches, "A_kpath_$(field)")
+            end
+        end
+    end
+
+    return mismatches
+end
+
 # --- 2. 处理单个 T 目录 ---
 function process_T_directory(dir_path)
     conf_dirs = glob("conf_*", dir_path)
-    if isempty(conf_dirs) return end
+    if isempty(conf_dirs)
+        remove_spectra_outputs!(dir_path)
+        return
+    end
+    sort!(conf_dirs)
     
     println("Processing $(basename(dir_path))...")
     
@@ -151,14 +269,28 @@ function process_T_directory(dir_path)
     samples_dos_AN_patch = []
     samples_ak = []
     samples_akpath = []
-    last_params = nothing
-    last_meta = Dict{String, Any}()
+    reference_params = nothing
+    reference_meta = Dict{String, Any}()
+    reference_signature = nothing
     
     # 收集有效样本
     for c_dir in conf_dirs
         jld_path = joinpath(c_dir, "spectra_bins.jld2")
         res = process_single_config(jld_path)
         if res !== nothing
+            sig = compatibility_signature(res)
+            if reference_signature === nothing
+                reference_signature = sig
+                reference_params = res.params
+                reference_meta = res.meta
+            else
+                mismatches = compatibility_mismatches(reference_signature, sig)
+                if !isempty(mismatches)
+                    @warn "Skipping incompatible spectra config." config=c_dir mismatches=join(mismatches, ", ")
+                    continue
+                end
+            end
+
             push!(samples_opt, res.opt)
             push!(samples_dos, res.dos)
             push!(samples_dos_AN, res.dos_AN)
@@ -169,13 +301,12 @@ function process_T_directory(dir_path)
             if res.akpath !== nothing
                 push!(samples_akpath, res.akpath)
             end
-            last_params = res.params
-            last_meta = res.meta
         end
     end
     
     real_n = length(samples_opt)
     if real_n == 0
+        remove_spectra_outputs!(dir_path)
         println("  -> Skipped: No valid JLD2 data.")
         return
     end
@@ -200,19 +331,9 @@ function process_T_directory(dir_path)
     end
     
     # 重建网格
-    p = last_params
-    omega_grid = haskey(last_meta, "omega_grid") ? last_meta["omega_grid"] :
-                 collect(p.ω_min : p.Δω : p.ω_max)
-    dos_omega_grid = haskey(last_meta, "dos_omega_grid") ? last_meta["dos_omega_grid"] :
-                     collect(-p.ω_max : p.Δω : p.ω_max)
-    
-    # 防御性修正网格长度
-    if length(omega_grid) != length(final_opt)
-        omega_grid = range(p.ω_min, stop=p.ω_max, length=length(final_opt))
-    end
-    if length(dos_omega_grid) != length(final_dos)
-        dos_omega_grid = range(-p.ω_max, stop=p.ω_max, length=length(final_dos))
-    end
+    p = reference_params
+    omega_grid = reference_signature.omega_grid
+    dos_omega_grid = reference_signature.dos_omega_grid
     
     # 写入 CSV 到 T 目录内
     open(joinpath(dir_path, "spectra_opt_cond.csv"), "w") do io
@@ -246,8 +367,8 @@ function process_T_directory(dir_path)
     
     open(joinpath(dir_path, "spectra_ak0.csv"), "w") do io
         println(io, "kx_idx,ky_idx,kx,ky,A_val,Error")
-        Lx_eff = Int(get(last_meta, "spectra_Lx_eff", p.Lx))
-        Ly_eff = Int(get(last_meta, "spectra_Ly_eff", p.Ly))
+        Lx_eff = Int(get(reference_meta, "spectra_Lx_eff", p.Lx))
+        Ly_eff = Int(get(reference_meta, "spectra_Ly_eff", p.Ly))
         Lx, Ly = resolve_ak_dims(final_ak, Lx_eff, Ly_eff; source=dir_path)
         for x in 1:Lx
             for y in 1:Ly
@@ -262,18 +383,10 @@ function process_T_directory(dir_path)
     end
 
     if final_akpath !== nothing && err_akpath !== nothing
-        kx_val = haskey(last_meta, "kpath_kx") ? last_meta["kpath_kx"] : nothing
-        ky_vals = haskey(last_meta, "kpath_ky") ? last_meta["kpath_ky"] : nothing
-        ky_indices = haskey(last_meta, "kpath_ky_idx") ? last_meta["kpath_ky_idx"] : nothing
-        if kx_val === nothing || ky_vals === nothing
-            _, ky_indices_fallback, kx_val_fallback, ky_vals_fallback = DwaveHMC.antinode_kpath(p)
-            kx_val = kx_val === nothing ? kx_val_fallback : kx_val
-            ky_vals = ky_vals === nothing ? ky_vals_fallback : ky_vals
-            ky_indices = ky_indices === nothing ? ky_indices_fallback : ky_indices
-        end
-        if ky_indices === nothing
-            ky_indices = collect(1:length(ky_vals))
-        end
+        kpath = reference_signature.kpath
+        kx_val = kpath.kx
+        ky_vals = kpath.ky
+        ky_indices = kpath.ky_idx
 
         open(joinpath(dir_path, "spectra_akpath.csv"), "w") do io
             println(io, "k_idx,ky_idx,kx,ky,omega,A_val,Error")
@@ -286,6 +399,8 @@ function process_T_directory(dir_path)
                 end
             end
         end
+    else
+        rm(joinpath(dir_path, "spectra_akpath.csv"); force=true)
     end
 end
 

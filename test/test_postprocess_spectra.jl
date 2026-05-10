@@ -23,14 +23,15 @@ function tiny_params()
 end
 
 function write_synthetic_spectra(dir; effective=(4, 4), metadata=true,
-                                 patch_mode=:all, nsweeps=2, offset=0.0)
+                                 patch_mode=:all, nsweeps=2, offset=0.0,
+                                 dos_grid=[-2.0, 0.0, 2.0])
     mkpath(dir)
     p = tiny_params()
     jldopen(joinpath(dir, "spectra_bins.jld2"), "w") do file
         file["params"] = p
         file["omega_grid"] = [0.5, 1.0]
         if metadata
-            file["dos_omega_grid"] = [-2.0, 0.0, 2.0]
+            file["dos_omega_grid"] = dos_grid
             file["spectra_Ltw"] = 2
             file["spectra_Lx_eff"] = effective[1]
             file["spectra_Ly_eff"] = effective[2]
@@ -127,6 +128,38 @@ end
         @test csv_data_rows(joinpath(t_dir, "spectra_ak0.csv")) == 16
         @test isfile(joinpath(t_dir, "spectra_dos_AN_patch.csv"))
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 1) == -2.0
+    end
+end
+
+@testset "projectHPC batch processor skips mismatched effective shapes" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001"); effective=(4, 4), offset=0.0)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002"); effective=(2, 2), offset=10.0)
+        write(joinpath(t_dir, "spectra_ak0.csv"), "stale\n")
+
+        did_throw = false
+        try
+            Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
+        catch
+            did_throw = true
+        end
+
+        @test !did_throw
+        @test csv_data_rows(joinpath(t_dir, "spectra_ak0.csv")) == 16
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 4.5
+    end
+end
+
+@testset "projectHPC batch processor skips same-length mismatched DOS grids" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001"); dos_grid=[-2.0, 0.0, 2.0], offset=0.0)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002"); dos_grid=[-3.0, 0.0, 3.0], offset=10.0)
+        Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
+
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 1) == -2.0
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 4.5
     end
 end
 
