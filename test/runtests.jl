@@ -4,6 +4,7 @@ using Test
     include("test_core_smoke.jl")
     include("test_twist_stiffness.jl")
     include("test_twisted_spectra.jl")
+    include("test_simulation_tbc.jl")
 
     if get(ENV, "DWAVEHMC_RUN_SIMULATION_TESTS", "0") == "1"
         include("test_simulation.jl")
