@@ -194,6 +194,9 @@ function measure_twisted_spectra(cache::ComputeCache,
     Ly = p.Ly
     Lx_eff = Lx * Ltw
     Ly_eff = Ly * Ltw
+    if isodd(Lx_eff) || isodd(Ly_eff)
+        error("TBC spectra require even effective dimensions to represent exact antinodes and kx=π path")
+    end
 
     dos_ω_grid = reuse_buffers ? cache.dos_omega_grid : copy(cache.dos_omega_grid)
     nω = length(dos_ω_grid)

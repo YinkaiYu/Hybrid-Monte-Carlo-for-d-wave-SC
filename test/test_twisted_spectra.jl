@@ -1,6 +1,7 @@
 using Test
 using Random
 using LinearAlgebra
+using FFTW
 using DwaveHMC
 
 @inline test_site_index_xy(x::Int, y::Int, Lx::Int, Ly::Int) =
@@ -60,6 +61,68 @@ function build_repeated_supercell_H!(H::Matrix{ComplexF64},
     end
 
     return nothing
+end
+
+function repeated_supercell_spectra_reference(p::ModelParameters,
+                                              state::SimulationState,
+                                              cache::ComputeCache,
+                                              Ltw::Int)
+    Lx_eff = p.Lx * Ltw
+    Ly_eff = p.Ly * Ltw
+    N_eff = Lx_eff * Ly_eff
+    dim_eff = 2 * N_eff
+    nω = length(cache.dos_omega_grid)
+
+    H_super = zeros(ComplexF64, dim_eff, dim_eff)
+    build_repeated_supercell_H!(H_super, p, state, Ltw)
+    vals, vecs = eigen(Hermitian(H_super, :U))
+
+    dos = zeros(Float64, nω)
+    A_k0 = zeros(Float64, Lx_eff, Ly_eff)
+    A_kpath = zeros(Float64, fld(Ly_eff, 2) + 1, nω)
+    lor_cache = zeros(Float64, nω)
+    u_r = zeros(ComplexF64, Lx_eff, Ly_eff)
+    u_k = similar(u_r)
+    fft_plan = plan_fft(u_r)
+    Ix_pi = div(Lx_eff, 2)
+
+    @inbounds for n in 1:dim_eff
+        En = vals[n]
+        electron_weight = 0.0
+        @simd for i in 1:N_eff
+            electron_weight += abs2(vecs[i, n])
+        end
+
+        for iw in eachindex(cache.dos_omega_grid)
+            lor_cache[iw] = DwaveHMC.lorentzian_spectra(cache.dos_omega_grid[iw] - En, p.η)
+            dos[iw] += electron_weight * lor_cache[iw]
+        end
+
+        for y in 1:Ly_eff, x in 1:Lx_eff
+            i_eff = test_site_index_xy(x, y, Lx_eff, Ly_eff)
+            u_r[x, y] = vecs[i_eff, n]
+        end
+        mul!(u_k, fft_plan, u_r)
+
+        weight_at_zero = DwaveHMC.lorentzian_spectra(-En, p.η)
+        if weight_at_zero > 1e-6
+            for y in 1:Ly_eff, x in 1:Lx_eff
+                A_k0[x, y] += abs2(u_k[x, y]) * weight_at_zero
+            end
+        end
+
+        for Iy in 0:fld(Ly_eff, 2)
+            wk = abs2(u_k[Ix_pi + 1, Iy + 1]) / N_eff
+            for iw in eachindex(cache.dos_omega_grid)
+                A_kpath[Iy + 1, iw] += wk * lor_cache[iw]
+            end
+        end
+    end
+
+    dos ./= N_eff
+    A_k0 ./= N_eff
+
+    return (dos=dos, A_k_ω0=A_k0, A_kpath=A_kpath)
 end
 
 function setup_tbc_fixture(; Lx::Int=4, Ly::Int=4)
@@ -203,4 +266,31 @@ end
     @test all(isfinite, tw2.dos_AN_patch)
     @test all(isfinite, tw2.A_k_ω0)
     @test all(isfinite, tw2.A_kpath)
+end
+
+@testset "Twisted spectra repeated-supercell regression" begin
+    p, state, cache = setup_tbc_fixture(Lx=3, Ly=3)
+    Ltw = 2
+
+    tw = measure_twisted_spectra(cache, p, state; Ltw=Ltw, reuse_buffers=false)
+    ref = repeated_supercell_spectra_reference(p, state, cache, Ltw)
+
+    @test isapprox(tw.dos, ref.dos; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw.A_k_ω0, ref.A_k_ω0; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw.A_kpath, ref.A_kpath; atol=1e-8, rtol=1e-8)
+end
+
+@testset "Twisted spectra odd effective dimensions" begin
+    p, state, cache = setup_tbc_fixture(Lx=3, Ly=3)
+
+    err = try
+        measure_twisted_spectra(cache, p, state; Ltw=1, reuse_buffers=false)
+        nothing
+    catch e
+        e
+    end
+
+    @test err isa ErrorException
+    @test occursin("TBC spectra require even effective dimensions",
+                   sprint(showerror, err))
 end
