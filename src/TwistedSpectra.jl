@@ -103,6 +103,13 @@ function antinode_patch_mask(kx_grid::Vector{Float64},
     return mask, count
 end
 
+"""
+    build_tbc_H_BdG!(H, p, state, qx, qy)
+
+Build the spectra twisted-boundary-condition BdG matrix in caller-provided
+storage `H`. The matrix is filled in the upper-triangle representation consumed
+by `Hermitian(H, :U)`.
+"""
 function build_tbc_H_BdG!(H::Matrix{ComplexF64},
                           p::ModelParameters,
                           state::SimulationState,

@@ -124,6 +124,12 @@ end
     @test Hfull[i_diag, j_diag] ≈ -p.tp * ph_diag
     @test Hfull[i_diag + p.N, j_diag + p.N] ≈ p.tp * ph_diag
 
+    i_diag_xmy = test_site_index_xy(p.Lx, 2, p.Lx, p.Ly)
+    j_diag_xmy = test_site_index_xy(1, 1, p.Lx, p.Ly)
+    ph_diag_xmy = cis(-qx)
+    @test Hfull[i_diag_xmy, j_diag_xmy] ≈ -p.tp * ph_diag_xmy
+    @test Hfull[i_diag_xmy + p.N, j_diag_xmy + p.N] ≈ p.tp * ph_diag_xmy
+
     @test Hfull[i_x, j_x + p.N] ≈ state.Δ[i_x, 1] * ph_x
     @test Hfull[j_x, i_x + p.N] ≈ state.Δ[i_x, 1] * conj(ph_x)
 
