@@ -81,6 +81,7 @@ function repeated_supercell_spectra_reference(p::ModelParameters,
     A_k0 = zeros(Float64, Lx_eff, Ly_eff)
     A_MX_path = zeros(Float64, fld(Ly_eff, 2) + 1, nω)
     A_XG_path = zeros(Float64, fld(min(Lx_eff, Ly_eff), 2) + 1, nω)
+    A_XG_node_patch = zeros(Float64, fld(min(Lx_eff, Ly_eff), 2) + 1, nω)
     lor_cache = zeros(Float64, nω)
     u_r = zeros(ComplexF64, Lx_eff, Ly_eff)
     u_k = similar(u_r)
@@ -124,13 +125,31 @@ function repeated_supercell_spectra_reference(p::ModelParameters,
             for iw in eachindex(cache.dos_omega_grid)
                 A_XG_path[I + 1, iw] += wk * lor_cache[iw]
             end
+
+            neighbor_indices = Set{Tuple{Int, Int}}()
+            for dx in -1:1, dy in -1:1
+                Ix = mod(I + dx, Lx_eff)
+                Iy = mod(I + dy, Ly_eff)
+                push!(neighbor_indices, (Ix, Iy))
+            end
+            patch_weight = 1.0 / length(neighbor_indices)
+            for (Ix, Iy) in neighbor_indices
+                wk_patch = patch_weight * abs2(u_k[Ix + 1, Iy + 1]) / N_eff
+                for iw in eachindex(cache.dos_omega_grid)
+                    A_XG_node_patch[I + 1, iw] += wk_patch * lor_cache[iw]
+                end
+            end
         end
     end
 
     dos ./= N_eff
     A_k0 ./= N_eff
 
-    return (dos=dos, A_k_ω0=A_k0, A_MX_path=A_MX_path, A_XG_path=A_XG_path)
+    return (dos=dos,
+            A_k_ω0=A_k0,
+            A_MX_path=A_MX_path,
+            A_XG_path=A_XG_path,
+            A_XG_node_patch=A_XG_node_patch)
 end
 
 function setup_tbc_fixture(; Lx::Int=4, Ly::Int=4)
@@ -291,6 +310,7 @@ end
     @test size(tw2.A_MX_path, 2) == length(cache.dos_omega_grid)
     @test size(tw2.A_XG_path, 1) == fld(min(p.Lx * 2, p.Ly * 2), 2) + 1
     @test size(tw2.A_XG_path, 2) == length(cache.dos_omega_grid)
+    @test size(tw2.A_XG_node_patch) == size(tw2.A_XG_path)
     @test length(tw2.kx_grid) == p.Lx * 2
     @test length(tw2.ky_grid) == p.Ly * 2
     @test all(isfinite, tw2.dos)
@@ -299,6 +319,7 @@ end
     @test all(isfinite, tw2.A_k_ω0)
     @test all(isfinite, tw2.A_MX_path)
     @test all(isfinite, tw2.A_XG_path)
+    @test all(isfinite, tw2.A_XG_node_patch)
 end
 
 @testset "Twisted spectra repeated-supercell regression" begin
@@ -312,6 +333,7 @@ end
     @test isapprox(tw.A_k_ω0, ref.A_k_ω0; atol=1e-8, rtol=1e-8)
     @test isapprox(tw.A_MX_path, ref.A_MX_path; atol=1e-8, rtol=1e-8)
     @test isapprox(tw.A_XG_path, ref.A_XG_path; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw.A_XG_node_patch, ref.A_XG_node_patch; atol=1e-8, rtol=1e-8)
 end
 
 @testset "Twisted spectra odd effective dimensions" begin

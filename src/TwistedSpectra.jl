@@ -9,6 +9,7 @@ struct TwistedSpectraResult
     A_k_ω0::Matrix{Float64}
     A_MX_path::Matrix{Float64}
     A_XG_path::Matrix{Float64}
+    A_XG_node_patch::Matrix{Float64}
     kx_grid::Vector{Float64}
     ky_grid::Vector{Float64}
     mx_path_kx::Float64
@@ -239,6 +240,7 @@ function measure_twisted_spectra(cache::ComputeCache,
     xg_path_kx, xg_path_ky = tbc_xg_path_metadata(Lx, Ly, Ltw)
     A_MX_path = zeros(Float64, length(mx_path_ky), nω)
     A_XG_path = zeros(Float64, length(xg_path_kx), nω)
+    A_XG_node_patch = zeros(Float64, length(xg_path_kx), nω)
     lor_cache = zeros(Float64, nω)
 
     kx_grid = effective_k_grid(Lx, Ltw)
@@ -267,6 +269,31 @@ function measure_twisted_spectra(cache::ComputeCache,
         xg_ny[path_idx], xg_my[path_idx] = effective_index_to_twist_fft(I, Ly, Ltw)
     end
 
+    xg_patch_terms_by_sector = [Tuple{Int, Int, Int, Float64}[] for _ in 1:(Ltw^2)]
+    for path_idx in eachindex(xg_path_kx)
+        I = path_idx - 1
+        neighbors = Tuple{Int, Int, Int, Int}[]
+        neighbor_indices = Set{Tuple{Int, Int}}()
+        for dx in -1:1, dy in -1:1
+            Ix = mod(I + dx, Lx_eff)
+            Iy = mod(I + dy, Ly_eff)
+            if (Ix, Iy) in neighbor_indices
+                continue
+            end
+            push!(neighbor_indices, (Ix, Iy))
+            nx_term, mx_term = effective_index_to_twist_fft(Ix, Lx, Ltw)
+            ny_term, my_term = effective_index_to_twist_fft(Iy, Ly, Ltw)
+            push!(neighbors, (nx_term, ny_term, mx_term, my_term))
+        end
+
+        patch_weight = 1.0 / length(neighbors)
+        for (nx_term, ny_term, mx_term, my_term) in neighbors
+            sector_idx = nx_term * Ltw + ny_term + 1
+            push!(xg_patch_terms_by_sector[sector_idx],
+                  (path_idx, mx_term, my_term, patch_weight))
+        end
+    end
+
     Htw = zeros(ComplexF64, dim, dim)
     Uwork = similar(Htw)
     Etw = zeros(Float64, dim)
@@ -274,6 +301,7 @@ function measure_twisted_spectra(cache::ComputeCache,
     @inbounds for nx in 0:Ltw-1, ny in 0:Ltw-1
         qx = 2π * nx / Ltw
         qy = 2π * ny / Ltw
+        sector_idx = nx * Ltw + ny + 1
         has_pi_0_sector = nx == nx_pi && ny == ny_zero
         has_0_pi_sector = nx == nx_zero && ny == ny_pi
 
@@ -355,6 +383,13 @@ function measure_twisted_spectra(cache::ComputeCache,
                     end
                 end
             end
+
+            for (path_idx, mx_term, my_term, weight_factor) in xg_patch_terms_by_sector[sector_idx]
+                wk = weight_factor * abs2(cache.u_k_cache[mx_term + 1, my_term + 1]) / N
+                for iw in eachindex(dos_ω_grid)
+                    A_XG_node_patch[path_idx, iw] += wk * lor_cache[iw]
+                end
+            end
         end
     end
 
@@ -369,6 +404,7 @@ function measure_twisted_spectra(cache::ComputeCache,
         reuse_buffers ? A_k0 : copy(A_k0),
         reuse_buffers ? A_MX_path : copy(A_MX_path),
         reuse_buffers ? A_XG_path : copy(A_XG_path),
+        reuse_buffers ? A_XG_node_patch : copy(A_XG_node_patch),
         kx_grid,
         ky_grid,
         mx_path_kx,

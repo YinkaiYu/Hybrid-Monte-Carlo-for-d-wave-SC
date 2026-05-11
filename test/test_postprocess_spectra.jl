@@ -39,10 +39,19 @@ function path_fixture(kind::Symbol)
     error("unknown path fixture")
 end
 
+function asymmetric_mx_path_fixture()
+    return [100.0 2.0 100.0;
+            4.0 20.0 6.0;
+            7.0 50.0 9.0;
+            10.0 30.0 12.0;
+            500.0 14.0 500.0]
+end
+
 function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                                  dos_grid=[-2.0, 0.0, 2.0],
                                  mx_path=path_fixture(:mx),
                                  xg_path=path_fixture(:xg),
+                                 xg_node_patch=path_fixture(:xg) .+ 100.0,
                                  mx_ky=[0.0, 0.25, 0.5, 0.75, 1.0],
                                  xg_k=[0.0, 0.25, 0.5, 0.75, 1.0])
     mkpath(dir)
@@ -75,6 +84,7 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
             file["$prefix/A_k0"] = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
             file["$prefix/A_MX_path"] = mx_path .+ offset .+ sweep
             file["$prefix/A_XG_path"] = xg_path .+ offset .+ sweep
+            file["$prefix/A_XG_node_patch"] = xg_node_patch .+ offset .+ sweep
         end
     end
 end
@@ -143,7 +153,24 @@ end
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 1) == -2.0
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 9.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 13.0
-        @test first_data_value(joinpath(t_dir, "spectra_dos_node.csv"), 2) == 11.0
+        @test first_data_value(joinpath(t_dir, "spectra_dos_node.csv"), 2) == 114.0
+    end
+end
+
+@testset "projectHPC batch processor uses wider AN window" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001");
+                                mx_path=asymmetric_mx_path_fixture(),
+                                offset=0.0,
+                                nsweeps=1)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002");
+                                mx_path=asymmetric_mx_path_fixture(),
+                                offset=10.0,
+                                nsweeps=1)
+        Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
+
+        @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 130.2
     end
 end
 

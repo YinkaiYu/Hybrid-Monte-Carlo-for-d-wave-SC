@@ -2,7 +2,7 @@ using JLD2
 using Glob
 using DwaveHMC
 
-include(normpath(joinpath(@__DIR__, "..", "..", "scripts", "spectra_postprocess_utils.jl")))
+include(joinpath(@__DIR__, "spectra_postprocess_utils.jl"))
 
 target_dir = get(ENV, "DWAVEHMC_ANALYSIS_DIR", @__DIR__)
 
@@ -63,6 +63,7 @@ function process_single_config(jld_path)
             sum_ak = copy(g1["A_k0"])
             sum_mx_path = copy(g1["A_MX_path"])
             sum_xg_path = copy(g1["A_XG_path"])
+            sum_xg_node_patch = copy(g1["A_XG_node_patch"])
             has_patch = haskey(g1, "dos_M_patch")
             sum_dos_M_patch = has_patch ? copy(g1["dos_M_patch"]) : nothing
             count = 1
@@ -78,6 +79,7 @@ function process_single_config(jld_path)
                 sum_ak .+= g["A_k0"]
                 sum_mx_path .+= g["A_MX_path"]
                 sum_xg_path .+= g["A_XG_path"]
+                sum_xg_node_patch .+= g["A_XG_node_patch"]
                 if has_patch
                     sum_dos_M_patch .+= g["dos_M_patch"]
                 end
@@ -91,11 +93,13 @@ function process_single_config(jld_path)
                    ak0=sum_ak ./ count,
                    mx_path=sum_mx_path ./ count,
                    xg_path=sum_xg_path ./ count,
+                   xg_node_patch=sum_xg_node_patch ./ count,
                    params=file["params"],
                    meta=meta)
 
             if any(isnan, res.opt) || any(isnan, res.dos) || any(isnan, res.dos_M) ||
                any(isnan, res.ak0) || any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
+               any(isnan, res.xg_node_patch) ||
                (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
                 return nothing
             end
@@ -131,6 +135,7 @@ function compatibility_signature(res)
         ak0_size=size(res.ak0),
         mx_path_size=size(res.mx_path),
         xg_path_size=size(res.xg_path),
+        xg_node_patch_size=size(res.xg_node_patch),
         mx_path_kx=meta["mx_path_kx"],
         mx_path_ky=meta["mx_path_ky"],
         mx_path_kx_idx=meta["mx_path_kx_idx"],
@@ -196,9 +201,11 @@ function process_T_directory(dir_path)
 
         mx_kx = fill(res.meta["mx_path_kx"], length(res.meta["mx_path_ky"]))
         AN_spectrum, _, peak_AN = path_observable(res.mx_path, res.meta["dos_omega_grid"],
-                                                  mx_kx, res.meta["mx_path_ky"])
-        node_spectrum, _, peak_node = path_observable(res.xg_path, res.meta["dos_omega_grid"],
-                                                      res.meta["xg_path_kx"], res.meta["xg_path_ky"])
+                                                  mx_kx, res.meta["mx_path_ky"];
+                                                  radius=DEFAULT_AN_PATH_WINDOW_RADIUS)
+        node_spectrum, _, peak_node = path_observable(res.xg_node_patch, res.meta["dos_omega_grid"],
+                                                      res.meta["xg_path_kx"], res.meta["xg_path_ky"];
+                                                      radius=0)
 
         push!(samples_opt, res.opt)
         push!(samples_dos, res.dos)

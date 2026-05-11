@@ -69,9 +69,9 @@ end
                 @test file["spectra_Lx_eff"] == 8
                 @test file["spectra_Ly_eff"] == 8
 
-                @test file["spectra_eta"] == 0.25 / 4
-                @test file["spectra_delta_omega"] == 0.25 / 4
-                @test length(file["dos_omega_grid"]) > length(collect(-2.0:0.25:2.0))
+                @test file["spectra_eta"] == 0.25
+                @test file["spectra_delta_omega"] == 0.25
+                @test length(file["dos_omega_grid"]) == length(collect(-2.0:0.25:2.0))
 
                 for key in ("m_point_patch_half_width",
                             "dos_omega_grid",
@@ -88,8 +88,11 @@ end
                 @test size(g["A_k0"]) == (8, 8)
                 @test size(g["A_MX_path"], 1) == 5
                 @test size(g["A_XG_path"], 1) == 5
+                @test size(g["A_XG_node_patch"], 1) == 5
+                @test size(g["A_XG_node_patch"]) == size(g["A_XG_path"])
                 @test haskey(g, "dos_M")
                 @test haskey(g, "dos_M_patch")
+                @test haskey(g, "A_XG_node_patch")
                 @test !haskey(g, "dos_AN")
                 @test !haskey(g, "dos_AN_patch")
                 @test all(isfinite, g["dos_M_patch"])

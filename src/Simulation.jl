@@ -149,8 +149,8 @@ end
 - `spectra_Ltw`: 谱函数动量网格的 twist 细分倍数；默认 `1`
 - `use_twisted_spectra`: 是否用 TBC 谱函数替代默认谱函数；默认在 `spectra_Ltw > 1` 时开启
 - `m_point_patch_half_width`: TBC M 点 patch 半宽；仅在 `use_twisted_spectra=true` 时写入和使用
-- `spectra_eta`: TBC 谱函数展宽；默认 `p.η / spectra_Ltw^2`
-- `spectra_delta_omega`: TBC 谱函数频率步长；默认 `p.Δω / spectra_Ltw^2`
+- `spectra_eta`: TBC 谱函数展宽；默认 `p.η`
+- `spectra_delta_omega`: TBC 谱函数频率步长；默认 `p.Δω`
 - `measure_twist`: 是否额外计算 twist benchmark；默认关闭，避免额外对角化
 - `twist_Ax`: twist 有限差分步长
 - `twist_qy`: 横向调制 twist 的动量，默认 `2π/Ly`
@@ -183,10 +183,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
         error("TBC spectra require even effective dimensions")
     end
     actual_spectra_eta = use_twisted_spectra ?
-                         Float64(spectra_eta === nothing ? p.η / actual_spectra_Ltw^2 : spectra_eta) :
+                         Float64(spectra_eta === nothing ? p.η : spectra_eta) :
                          p.η
     actual_spectra_delta_omega = use_twisted_spectra ?
-                                 Float64(spectra_delta_omega === nothing ? p.Δω / actual_spectra_Ltw^2 : spectra_delta_omega) :
+                                 Float64(spectra_delta_omega === nothing ? p.Δω : spectra_delta_omega) :
                                  p.Δω
     actual_spectra_eta > 0 || error("spectra_eta must be positive")
     actual_spectra_delta_omega > 0 || error("spectra_delta_omega must be positive")
@@ -377,6 +377,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_Ak0 = Matrix{Float64}(undef, 0, 0)
     accum_AMXpath = Matrix{Float64}(undef, 0, 0)
     accum_AXGpath = Matrix{Float64}(undef, 0, 0)
+    accum_AXGnodePatch = nothing
     
     for i in 1:n_measure
         # 1. HMC 演化
@@ -425,9 +426,11 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                           twisted_res.A_MX_path,
                                           twisted_res.A_XG_path)
                 spec_dos_M_patch = twisted_res.dos_M_patch
+                spec_xg_node_patch = twisted_res.A_XG_node_patch
             else
                 spec_res = measure_transport_and_spectra(cache, p; reuse_buffers=true)
                 spec_dos_M_patch = nothing
+                spec_xg_node_patch = nothing
             end
             
             # A. 写入 Transport CSV (Scalars)
@@ -461,6 +464,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_Ak0 = copy(spec_res.A_k_ω0)
                 accum_AMXpath = copy(spec_res.A_MX_path)
                 accum_AXGpath = copy(spec_res.A_XG_path)
+                accum_AXGnodePatch = spec_xg_node_patch === nothing ? nothing : copy(spec_xg_node_patch)
                 bin_count = 1
             else
                 accum_opt_cond .+= spec_res.optical_conductivity
@@ -473,6 +477,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_Ak0 .+= spec_res.A_k_ω0
                 accum_AMXpath .+= spec_res.A_MX_path
                 accum_AXGpath .+= spec_res.A_XG_path
+                if spec_xg_node_patch !== nothing
+                    accum_AXGnodePatch === nothing && error("A_XG_node_patch accumulator missing for TBC spectra")
+                    accum_AXGnodePatch .+= spec_xg_node_patch
+                end
                 bin_count += 1
             end
             
@@ -488,6 +496,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_Ak0 ./= bin_count
                 accum_AMXpath ./= bin_count
                 accum_AXGpath ./= bin_count
+                if accum_AXGnodePatch !== nothing
+                    accum_AXGnodePatch ./= bin_count
+                end
                 
                 # JLD2 追加写入
                 # 使用 string key 来区分不同的 bin，例如 "bin_100", "bin_200" 表示到第几步的 bin
@@ -504,6 +515,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     g["A_k0"] = accum_Ak0
                     g["A_MX_path"] = accum_AMXpath
                     g["A_XG_path"] = accum_AXGpath
+                    if accum_AXGnodePatch !== nothing
+                        g["A_XG_node_patch"] = accum_AXGnodePatch
+                    end
                     g["count"] = bin_count # 记录这个 bin 包含了多少个样本
                 end
                 
