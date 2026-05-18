@@ -238,12 +238,12 @@ $\pm1$ 个路径点取平均，输出为 `processed_dos_AN.csv` 或 HPC 汇总�
 
 TBC 输出文件会记录 `spectra_Ltw`、`spectra_Lx_eff`、`spectra_Ly_eff`、`kx_grid`、`ky_grid`、
 `mx_path_kx/mx_path_ky`、`xg_path_kx/xg_path_ky` 以及对应 index 元数据。启用 TBC 且未显式指定时，
-`run_simulation` 会把谱函数展宽和频率步长默认缩小为
+`run_simulation` 沿用模型参数中的谱函数展宽和频率步长，
 $$
-\eta_{\mathrm{spectra}}=\eta/L_{\mathrm{tw}}^2,\qquad
-\Delta\omega_{\mathrm{spectra}}=\Delta\omega/L_{\mathrm{tw}}^2,
+\eta_{\mathrm{spectra}}=\eta,\qquad
+\Delta\omega_{\mathrm{spectra}}=\Delta\omega,
 $$
-并把实际使用的 `spectra_eta` 与 `spectra_delta_omega` 写入元数据。
+也可以通过 `spectra_eta` 与 `spectra_delta_omega` 显式覆盖；实际使用值会写入元数据。
 
 ### 赝能隙
 
