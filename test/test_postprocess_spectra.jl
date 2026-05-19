@@ -263,6 +263,32 @@ end
     end
 end
 
+@testset "projectHPC batch processor skips configs without selected eta" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001"); offset=0.0, nsweeps=1)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002");
+                                offset=10.0,
+                                nsweeps=1,
+                                multi_eta=false)
+
+        did_throw = false
+        try
+            Base.invokelatest(HPCProcessSpectraScript.process_T_directory,
+                              t_dir;
+                              eta_factor=4)
+        catch
+            did_throw = true
+        end
+
+        @test !did_throw
+        if !did_throw
+            @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 16.0
+            @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 32.0
+        end
+    end
+end
+
 @testset "projectHPC batch processor uses wider AN window" begin
     mktempdir() do root
         t_dir = joinpath(root, "T_0.10")

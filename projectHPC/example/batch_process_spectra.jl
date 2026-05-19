@@ -44,6 +44,13 @@ function read_required_metadata(file)
     )
 end
 
+function is_eta_selection_error(e)
+    msg = sprint(showerror, e)
+    return occursin("eta_factor", msg) ||
+           occursin("multi-eta", msg) ||
+           occursin("selected eta factor", msg)
+end
+
 function process_single_config(jld_path; eta_factor=1)
     if !isfile(jld_path) || filesize(jld_path) == 0
         return nothing
@@ -126,12 +133,7 @@ function process_single_config(jld_path; eta_factor=1)
             return res
         end
     catch e
-        msg = sprint(showerror, e)
-        if occursin("eta_factor", msg) ||
-           occursin("multi-eta", msg) ||
-           occursin("selected eta factor", msg)
-            rethrow()
-        end
+        is_eta_selection_error(e) && rethrow()
         return nothing
     end
 end
@@ -209,7 +211,15 @@ function process_T_directory(dir_path; eta_factor=1)
 
     for c_dir in conf_dirs
         jld_path = joinpath(c_dir, "spectra_bins.jld2")
-        res = process_single_config(jld_path; eta_factor=eta_factor)
+        res = try
+            process_single_config(jld_path; eta_factor=eta_factor)
+        catch e
+            if is_eta_selection_error(e)
+                @warn "Skipping spectra config with incompatible eta selection." config=c_dir error=sprint(showerror, e)
+                continue
+            end
+            rethrow()
+        end
         if res === nothing
             continue
         end
