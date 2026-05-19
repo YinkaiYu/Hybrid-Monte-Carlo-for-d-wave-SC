@@ -77,10 +77,18 @@ end
                 @test length(g["dc_cond_eta"]) == 7
                 @test size(g["opt_cond_eta"], 1) == 7
                 @test size(g["dos_eta"], 1) == 7
+                @test size(g["dos_M_eta"], 1) == 7
+                @test size(g["LDOS_0_eta"], 1) == 7
+                @test size(g["A_k0_eta"], 1) == 7
                 @test size(g["A_MX_path_eta"], 1) == 7
+                @test size(g["A_XG_path_eta"], 1) == 7
                 @test g["opt_cond"] == vec(g["opt_cond_eta"][1, :])
                 @test g["dos"] == vec(g["dos_eta"][1, :])
+                @test g["dos_M"] == vec(g["dos_M_eta"][1, :])
+                @test g["LDOS_0"] == vec(g["LDOS_0_eta"][1, :])
+                @test g["A_k0"] == g["A_k0_eta"][1, :, :]
                 @test g["A_MX_path"] == g["A_MX_path_eta"][1, :, :]
+                @test g["A_XG_path"] == g["A_XG_path_eta"][1, :, :]
                 @test length(g["LDOS_0"]) == 16
                 @test size(g["A_k0"]) == (4, 4)
                 @test !haskey(g, "dos_M_patch")
