@@ -234,6 +234,8 @@ function measure_twisted_spectra(cache::ComputeCache,
     nη > 0 || error("eta_values must be non-empty")
     all(isfinite, eta_vals) || error("eta_values must be finite")
     all(>(0.0), eta_vals) || error("eta_values must be positive")
+    isapprox(eta_vals[1], spectra_eta; atol=ETA_FACTOR_ATOL, rtol=0.0) ||
+        error("eta_values[1] must match spectra_eta")
 
     N = p.N
     dim = 2 * N

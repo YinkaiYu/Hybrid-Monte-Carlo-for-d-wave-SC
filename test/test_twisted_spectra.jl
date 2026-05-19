@@ -374,6 +374,29 @@ end
     @test tw.A_XG_node_patch == tw.A_XG_node_patch_eta[1, :, :]
 end
 
+@testset "TBC rejects mismatched spectra eta metadata" begin
+    Random.seed!(20260520)
+    p = ModelParameters(4, 4, 1.0, -0.35, -0.5, 0.0, 0.0, 8.0, 1.0, 1.0;
+                        η=0.25, Δω=0.25, ω_max=2.0)
+    state = initialize_state(p)
+    cache = initialize_cache(p)
+
+    err = try
+        measure_twisted_spectra(cache, p, state;
+                                Ltw=2,
+                                spectra_eta=p.η,
+                                spectra_delta_omega=p.Δω,
+                                eta_values=[2p.η, 4p.η])
+        nothing
+    catch e
+        e
+    end
+
+    @test err isa ErrorException
+    @test occursin("eta_values[1]", sprint(showerror, err)) ||
+          occursin("spectra_eta", sprint(showerror, err))
+end
+
 @testset "Twisted spectra repeated-supercell regression" begin
     p, state, cache = setup_tbc_fixture(Lx=3, Ly=3)
     Ltw = 2
