@@ -21,6 +21,24 @@ function run_tiny_spectra_simulation(p::ModelParameters, out_dir::String; kwargs
     return joinpath(out_dir, "spectra_bins.jld2")
 end
 
+@testset "spectra eta factor validation" begin
+    @test DwaveHMC.validate_spectra_eta_factors([1, 2, 4]) == [1.0, 2.0, 4.0]
+    @test DwaveHMC.validate_spectra_eta_factors((1, 2, 4, 8)) == [1.0, 2.0, 4.0, 8.0]
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors(Float64[])
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors([0, 1, 2])
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors([1, -2, 4])
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors([1, NaN, 4])
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors([1, Inf, 4])
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors([2, 4, 8])
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors([2, 1, 4])
+    @test_throws ErrorException DwaveHMC.validate_spectra_eta_factors([1, 2, 2])
+
+    factors = [1.0, 2.0, 4.0, 8.0]
+    @test DwaveHMC.eta_factor_index(factors, 1) == 1
+    @test DwaveHMC.eta_factor_index(factors, 4) == 3
+    @test_throws ErrorException DwaveHMC.eta_factor_index(factors, 16)
+end
+
 @testset "Simulation spectra TBC integration" begin
     @testset "default simulation writes untwisted spectra metadata and bins" begin
         mktempdir() do out_dir

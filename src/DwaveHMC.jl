@@ -9,6 +9,7 @@ export hmc_sweep!, compute_total_energy
 export measure_observables, measure_transport_and_spectra, measure_twisted_spectra
 export run_simulation, calc_optimal_dt
 
+include("MultiEta.jl")
 include("Types.jl")
 include("Hamiltonian.jl")
 include("Observables.jl")
