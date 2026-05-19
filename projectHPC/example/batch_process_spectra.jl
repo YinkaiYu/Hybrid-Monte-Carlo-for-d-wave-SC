@@ -66,7 +66,8 @@ function process_single_config(jld_path)
             sum_ak = copy(g1["A_k0"])
             sum_mx_path = copy(g1["A_MX_path"])
             sum_xg_path = copy(g1["A_XG_path"])
-            sum_xg_node_patch = copy(g1["A_XG_node_patch"])
+            has_xg_node_patch = haskey(g1, "A_XG_node_patch")
+            sum_xg_node_patch = has_xg_node_patch ? copy(g1["A_XG_node_patch"]) : nothing
             has_patch = haskey(g1, "dos_M_patch")
             sum_dos_M_patch = has_patch ? copy(g1["dos_M_patch"]) : nothing
             count = 1
@@ -74,6 +75,9 @@ function process_single_config(jld_path)
             for i in 2:length(sweep_keys)
                 g = file[sweep_keys[i]]
                 if haskey(g, "dos_M_patch") != has_patch
+                    return nothing
+                end
+                if haskey(g, "A_XG_node_patch") != has_xg_node_patch
                     return nothing
                 end
                 if haskey(g, "LDOS_0") != has_ldos0
@@ -88,7 +92,9 @@ function process_single_config(jld_path)
                 sum_ak .+= g["A_k0"]
                 sum_mx_path .+= g["A_MX_path"]
                 sum_xg_path .+= g["A_XG_path"]
-                sum_xg_node_patch .+= g["A_XG_node_patch"]
+                if has_xg_node_patch
+                    sum_xg_node_patch .+= g["A_XG_node_patch"]
+                end
                 if has_patch
                     sum_dos_M_patch .+= g["dos_M_patch"]
                 end
@@ -103,13 +109,13 @@ function process_single_config(jld_path)
                    ak0=sum_ak ./ count,
                    mx_path=sum_mx_path ./ count,
                    xg_path=sum_xg_path ./ count,
-                   xg_node_patch=sum_xg_node_patch ./ count,
+                   xg_node_patch=has_xg_node_patch ? (sum_xg_node_patch ./ count) : nothing,
                    params=file["params"],
                    meta=meta)
 
             if any(isnan, res.opt) || any(isnan, res.dos) || any(isnan, res.dos_M) ||
                any(isnan, res.ak0) || any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
-               any(isnan, res.xg_node_patch) ||
+               (res.xg_node_patch !== nothing && any(isnan, res.xg_node_patch)) ||
                (res.ldos0 !== nothing && any(isnan, res.ldos0)) ||
                (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
                 return nothing
@@ -147,7 +153,7 @@ function compatibility_signature(res)
         ak0_size=size(res.ak0),
         mx_path_size=size(res.mx_path),
         xg_path_size=size(res.xg_path),
-        xg_node_patch_size=size(res.xg_node_patch),
+        xg_node_patch_size=res.xg_node_patch === nothing ? nothing : size(res.xg_node_patch),
         mx_path_kx=meta["mx_path_kx"],
         mx_path_ky=meta["mx_path_ky"],
         mx_path_kx_idx=meta["mx_path_kx_idx"],
@@ -218,7 +224,8 @@ function process_T_directory(dir_path)
         AN_spectrum, _, peak_AN = path_observable(res.mx_path, res.meta["dos_omega_grid"],
                                                   mx_kx, res.meta["mx_path_ky"];
                                                   radius=DEFAULT_AN_PATH_WINDOW_RADIUS)
-        node_spectrum, _, peak_node = path_observable(res.xg_node_patch, res.meta["dos_omega_grid"],
+        node_path = res.xg_node_patch === nothing ? res.xg_path : res.xg_node_patch
+        node_spectrum, _, peak_node = path_observable(node_path, res.meta["dos_omega_grid"],
                                                       res.meta["xg_path_kx"], res.meta["xg_path_ky"];
                                                       radius=0)
 

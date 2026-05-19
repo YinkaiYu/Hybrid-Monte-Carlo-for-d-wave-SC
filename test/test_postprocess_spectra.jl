@@ -53,14 +53,17 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                                  xg_path=path_fixture(:xg),
                                  xg_node_patch=path_fixture(:xg) .+ 100.0,
                                  mx_ky=[0.0, 0.25, 0.5, 0.75, 1.0],
-                                 xg_k=[0.0, 0.25, 0.5, 0.75, 1.0])
+                                 xg_k=[0.0, 0.25, 0.5, 0.75, 1.0],
+                                 use_twisted_spectra=true,
+                                 spectra_Ltw=2)
     mkpath(dir)
     p = tiny_params()
     jldopen(joinpath(dir, "spectra_bins.jld2"), "w") do file
         file["params"] = p
+        file["use_twisted_spectra"] = use_twisted_spectra
         file["omega_grid"] = [0.5, 1.0]
         file["dos_omega_grid"] = dos_grid
-        file["spectra_Ltw"] = 2
+        file["spectra_Ltw"] = spectra_Ltw
         file["spectra_Lx_eff"] = effective[1]
         file["spectra_Ly_eff"] = effective[2]
         file["spectra_eta"] = 0.125
@@ -80,12 +83,16 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
             file["$prefix/opt_cond"] = [1.0, 2.0] .+ offset .+ sweep
             file["$prefix/dos"] = [3.0, 4.0, 5.0] .+ offset .+ sweep
             file["$prefix/dos_M"] = [6.0, 7.0, 8.0] .+ offset .+ sweep
-            file["$prefix/dos_M_patch"] = [10.0, 20.0, 30.0] .+ offset .+ sweep
+            if use_twisted_spectra
+                file["$prefix/dos_M_patch"] = [10.0, 20.0, 30.0] .+ offset .+ sweep
+            end
             file["$prefix/LDOS_0"] = collect(1.0:4.0) .+ offset .+ sweep
             file["$prefix/A_k0"] = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
             file["$prefix/A_MX_path"] = mx_path .+ offset .+ sweep
             file["$prefix/A_XG_path"] = xg_path .+ offset .+ sweep
-            file["$prefix/A_XG_node_patch"] = xg_node_patch .+ offset .+ sweep
+            if use_twisted_spectra
+                file["$prefix/A_XG_node_patch"] = xg_node_patch .+ offset .+ sweep
+            end
         end
     end
 end
@@ -139,6 +146,24 @@ end
     end
 end
 
+@testset "batch_process_spectra.jl accepts untwisted Ltw1 spectra without patch fields" begin
+    mktempdir() do root
+        root_dir = joinpath(root, BATCH_ROOT_REL)
+        target_dir = joinpath(root_dir, "T_0.10")
+        write_synthetic_spectra(target_dir;
+                                use_twisted_spectra=false,
+                                spectra_Ltw=1,
+                                nsweeps=1)
+        Base.invokelatest(BatchProcessSpectraScript.process_single_directory, target_dir)
+
+        @test isfile(joinpath(target_dir, "processed_dos.csv"))
+        @test isfile(joinpath(target_dir, "processed_dos_node.csv"))
+        @test !isfile(joinpath(target_dir, "processed_dos_M_patch.csv"))
+        @test first_data_value(joinpath(target_dir, "processed_dos.csv"), 2) == 4.0
+        @test first_data_value(joinpath(target_dir, "processed_dos_node.csv"), 2) == 6.0
+    end
+end
+
 @testset "projectHPC batch processor M, antinode, and node outputs" begin
     mktempdir() do root
         t_dir = joinpath(root, "T_0.10")
@@ -177,6 +202,29 @@ end
         Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
 
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 130.2
+    end
+end
+
+@testset "projectHPC batch processor accepts untwisted Ltw1 spectra without patch fields" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001");
+                                use_twisted_spectra=false,
+                                spectra_Ltw=1,
+                                offset=0.0,
+                                nsweeps=1)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002");
+                                use_twisted_spectra=false,
+                                spectra_Ltw=1,
+                                offset=10.0,
+                                nsweeps=1)
+        Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
+
+        @test isfile(joinpath(t_dir, "spectra_dos.csv"))
+        @test isfile(joinpath(t_dir, "spectra_dos_node.csv"))
+        @test !isfile(joinpath(t_dir, "spectra_dos_M_patch.csv"))
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 9.0
+        @test first_data_value(joinpath(t_dir, "spectra_dos_node.csv"), 2) == 14.0
     end
 end
 
