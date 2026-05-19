@@ -51,6 +51,20 @@ function is_eta_selection_error(e)
            occursin("selected eta factor", msg)
 end
 
+function selected_eta_value(file, eta_idx::Int, eta_factor)
+    if haskey(file, "eta_values")
+        return Float64(file["eta_values"][eta_idx])
+    end
+
+    isapprox(Float64(eta_factor), 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0) ||
+        error("Missing eta_values metadata for eta_factor=$eta_factor")
+
+    if haskey(file, "spectra_eta")
+        return Float64(file["spectra_eta"])
+    end
+    return Float64(file["params"].η)
+end
+
 function process_single_config(jld_path; eta_factor=1)
     if !isfile(jld_path) || filesize(jld_path) == 0
         return nothing
@@ -66,6 +80,7 @@ function process_single_config(jld_path; eta_factor=1)
             meta = read_required_metadata(file)
             g1 = file[sweep_keys[1]]
             eta_idx = selected_eta_index(file, eta_factor)
+            selected_eta = selected_eta_value(file, eta_idx, eta_factor)
             sum_opt = copy(selected_vector(g1, "opt_cond_eta", "opt_cond", eta_idx))
             sum_dos = copy(selected_vector(g1, "dos_eta", "dos", eta_idx))
             sum_dos_M = copy(selected_vector(g1, "dos_M_eta", "dos_M", eta_idx))
@@ -119,6 +134,7 @@ function process_single_config(jld_path; eta_factor=1)
                    xg_path=sum_xg_path ./ count,
                    node_path=sum_node_path ./ count,
                    node_from_patch=has_node_patch,
+                   selected_eta=selected_eta,
                    params=file["params"],
                    meta=meta)
 
@@ -165,6 +181,7 @@ function compatibility_signature(res)
         xg_path_size=size(res.xg_path),
         node_path_size=size(res.node_path),
         node_from_patch=res.node_from_patch,
+        selected_eta=res.selected_eta,
         mx_path_kx=meta["mx_path_kx"],
         mx_path_ky=meta["mx_path_ky"],
         mx_path_kx_idx=meta["mx_path_kx_idx"],

@@ -146,6 +146,13 @@ function header(path)
     return strip(readline(path))
 end
 
+function replace_jld2_dataset!(file, key, value)
+    if haskey(file, key)
+        delete!(file, key)
+    end
+    file[key] = value
+end
+
 @testset "process_spectra.jl M-point metadata and path spectra" begin
     mktempdir() do root
         target_dir = joinpath(root, PROCESS_TARGET_REL)
@@ -215,6 +222,20 @@ end
     end
 end
 
+@testset "process_spectra.jl rejects malformed multi-eta dimensions" begin
+    mktempdir() do root
+        target_dir = joinpath(root, PROCESS_TARGET_REL)
+        write_synthetic_spectra(target_dir; nsweeps=1)
+        jldopen(joinpath(target_dir, "spectra_bins.jld2"), "a+") do file
+            replace_jld2_dataset!(file, "sweep_1/dos_eta", ones(Float64, 3, 2))
+        end
+
+        @test_throws ErrorException Base.invokelatest(ProcessSpectraScript.process_spectra_directory,
+                                                      target_dir;
+                                                      eta_factor=4)
+    end
+end
+
 @testset "process_spectra.jl rejects old data for non-default eta" begin
     mktempdir() do root
         target_dir = joinpath(root, PROCESS_TARGET_REL)
@@ -260,6 +281,23 @@ end
 
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 36.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 52.0
+    end
+end
+
+@testset "projectHPC batch processor skips mismatched selected eta value" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001"); offset=0.0, nsweeps=1)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002"); offset=10.0, nsweeps=1)
+        jldopen(joinpath(t_dir, "conf_002", "spectra_bins.jld2"), "a+") do file
+            replace_jld2_dataset!(file, "eta_values", [0.125, 0.25, 0.75])
+        end
+
+        Base.invokelatest(HPCProcessSpectraScript.process_T_directory,
+                          t_dir;
+                          eta_factor=4)
+
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 16.0
     end
 end
 

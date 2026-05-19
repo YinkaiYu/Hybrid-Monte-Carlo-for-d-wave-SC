@@ -38,7 +38,17 @@ end
 
 function selected_vector(group, multi_key::AbstractString, old_key::AbstractString, eta_idx::Int)
     if haskey(group, multi_key)
-        return vec(group[multi_key][eta_idx, :])
+        arr = group[multi_key]
+        ndims(arr) == 2 ||
+            error("$multi_key expected a 2D eta-first array with eta dimension >= $eta_idx; actual size $(size(arr))")
+        size(arr, 1) >= eta_idx ||
+            error("$multi_key expected eta dimension >= $eta_idx; actual size $(size(arr))")
+        if haskey(group, old_key)
+            expected_len = length(group[old_key])
+            size(arr, 2) == expected_len ||
+                error("$multi_key expected shape (eta, $expected_len) compatible with $old_key; actual size $(size(arr))")
+        end
+        return vec(arr[eta_idx, :])
     end
     eta_idx == 1 || error("Missing $multi_key for selected eta factor")
     return group[old_key]
@@ -46,7 +56,17 @@ end
 
 function selected_matrix(group, multi_key::AbstractString, old_key::AbstractString, eta_idx::Int)
     if haskey(group, multi_key)
-        return group[multi_key][eta_idx, :, :]
+        arr = group[multi_key]
+        ndims(arr) == 3 ||
+            error("$multi_key expected a 3D eta-first array with eta dimension >= $eta_idx; actual size $(size(arr))")
+        size(arr, 1) >= eta_idx ||
+            error("$multi_key expected eta dimension >= $eta_idx; actual size $(size(arr))")
+        if haskey(group, old_key)
+            old = group[old_key]
+            size(arr, 2) == size(old, 1) && size(arr, 3) == size(old, 2) ||
+                error("$multi_key expected shape (eta, $(size(old, 1)), $(size(old, 2))) compatible with $old_key; actual size $(size(arr))")
+        end
+        return arr[eta_idx, :, :]
     end
     eta_idx == 1 || error("Missing $multi_key for selected eta factor")
     return group[old_key]
