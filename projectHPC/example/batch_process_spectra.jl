@@ -11,7 +11,6 @@ const SPECTRA_OUTPUT_FILES = [
     "spectra_dos.csv",
     "spectra_dos_M.csv",
     "spectra_dos_M_patch.csv",
-    "spectra_ldos0.csv",
     "spectra_ak0.csv",
     "spectra_MX_path.csv",
     "spectra_XG_path.csv",
@@ -61,13 +60,12 @@ function process_single_config(jld_path)
             sum_opt = copy(g1["opt_cond"])
             sum_dos = copy(g1["dos"])
             sum_dos_M = copy(g1["dos_M"])
-            has_ldos0 = haskey(g1, "LDOS_0")
-            sum_ldos0 = has_ldos0 ? copy(g1["LDOS_0"]) : nothing
             sum_ak = copy(g1["A_k0"])
             sum_mx_path = copy(g1["A_MX_path"])
             sum_xg_path = copy(g1["A_XG_path"])
-            has_xg_node_patch = haskey(g1, "A_XG_node_patch")
-            sum_xg_node_patch = has_xg_node_patch ? copy(g1["A_XG_node_patch"]) : nothing
+            has_node_patch = haskey(g1, "A_XG_node_patch")
+            node_source_key = has_node_patch ? "A_XG_node_patch" : "A_XG_path"
+            sum_node_path = copy(g1[node_source_key])
             has_patch = haskey(g1, "dos_M_patch")
             sum_dos_M_patch = has_patch ? copy(g1["dos_M_patch"]) : nothing
             count = 1
@@ -77,24 +75,16 @@ function process_single_config(jld_path)
                 if haskey(g, "dos_M_patch") != has_patch
                     return nothing
                 end
-                if haskey(g, "A_XG_node_patch") != has_xg_node_patch
-                    return nothing
-                end
-                if haskey(g, "LDOS_0") != has_ldos0
+                if haskey(g, "A_XG_node_patch") != has_node_patch
                     return nothing
                 end
                 sum_opt .+= g["opt_cond"]
                 sum_dos .+= g["dos"]
                 sum_dos_M .+= g["dos_M"]
-                if has_ldos0
-                    sum_ldos0 .+= g["LDOS_0"]
-                end
                 sum_ak .+= g["A_k0"]
                 sum_mx_path .+= g["A_MX_path"]
                 sum_xg_path .+= g["A_XG_path"]
-                if has_xg_node_patch
-                    sum_xg_node_patch .+= g["A_XG_node_patch"]
-                end
+                sum_node_path .+= g[node_source_key]
                 if has_patch
                     sum_dos_M_patch .+= g["dos_M_patch"]
                 end
@@ -105,18 +95,17 @@ function process_single_config(jld_path)
                    dos=sum_dos ./ count,
                    dos_M=sum_dos_M ./ count,
                    dos_M_patch=has_patch ? (sum_dos_M_patch ./ count) : nothing,
-                   ldos0=has_ldos0 ? (sum_ldos0 ./ count) : nothing,
                    ak0=sum_ak ./ count,
                    mx_path=sum_mx_path ./ count,
                    xg_path=sum_xg_path ./ count,
-                   xg_node_patch=has_xg_node_patch ? (sum_xg_node_patch ./ count) : nothing,
+                   node_path=sum_node_path ./ count,
+                   node_from_patch=has_node_patch,
                    params=file["params"],
                    meta=meta)
 
             if any(isnan, res.opt) || any(isnan, res.dos) || any(isnan, res.dos_M) ||
                any(isnan, res.ak0) || any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
-               (res.xg_node_patch !== nothing && any(isnan, res.xg_node_patch)) ||
-               (res.ldos0 !== nothing && any(isnan, res.ldos0)) ||
+               any(isnan, res.node_path) ||
                (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
                 return nothing
             end
@@ -149,11 +138,11 @@ function compatibility_signature(res)
         dos_size=size(res.dos),
         dos_M_size=size(res.dos_M),
         dos_M_patch_size=res.dos_M_patch === nothing ? nothing : size(res.dos_M_patch),
-        ldos0_size=res.ldos0 === nothing ? nothing : size(res.ldos0),
         ak0_size=size(res.ak0),
         mx_path_size=size(res.mx_path),
         xg_path_size=size(res.xg_path),
-        xg_node_patch_size=res.xg_node_patch === nothing ? nothing : size(res.xg_node_patch),
+        node_path_size=size(res.node_path),
+        node_from_patch=res.node_from_patch,
         mx_path_kx=meta["mx_path_kx"],
         mx_path_ky=meta["mx_path_ky"],
         mx_path_kx_idx=meta["mx_path_kx_idx"],
@@ -189,7 +178,6 @@ function process_T_directory(dir_path)
     samples_dos = []
     samples_dos_M = []
     samples_dos_M_patch = []
-    samples_ldos0 = []
     samples_ak = []
     samples_mx_path = []
     samples_xg_path = []
@@ -197,7 +185,6 @@ function process_T_directory(dir_path)
     samples_node = []
     peak_rows = []
     reference_meta = nothing
-    reference_params = nothing
     reference_signature = nothing
 
     for c_dir in conf_dirs
@@ -211,7 +198,6 @@ function process_T_directory(dir_path)
         if reference_signature === nothing
             reference_signature = sig
             reference_meta = res.meta
-            reference_params = res.params
         else
             mismatches = compatibility_mismatches(reference_signature, sig)
             if !isempty(mismatches)
@@ -223,20 +209,17 @@ function process_T_directory(dir_path)
         mx_kx = fill(res.meta["mx_path_kx"], length(res.meta["mx_path_ky"]))
         AN_spectrum, _, peak_AN = path_observable(res.mx_path, res.meta["dos_omega_grid"],
                                                   mx_kx, res.meta["mx_path_ky"];
-                                                  radius=DEFAULT_AN_PATH_WINDOW_RADIUS)
-        node_path = res.xg_node_patch === nothing ? res.xg_path : res.xg_node_patch
-        node_spectrum, _, peak_node = path_observable(node_path, res.meta["dos_omega_grid"],
+                                                  top_n=DEFAULT_AN_TOP_COUNT)
+        node_radius = res.node_from_patch ? 0 : DEFAULT_PATH_WINDOW_RADIUS
+        node_spectrum, _, peak_node = path_observable(res.node_path, res.meta["dos_omega_grid"],
                                                       res.meta["xg_path_kx"], res.meta["xg_path_ky"];
-                                                      radius=0)
+                                                      radius=node_radius)
 
         push!(samples_opt, res.opt)
         push!(samples_dos, res.dos)
         push!(samples_dos_M, res.dos_M)
         if res.dos_M_patch !== nothing
             push!(samples_dos_M_patch, res.dos_M_patch)
-        end
-        if res.ldos0 !== nothing
-            push!(samples_ldos0, res.ldos0)
         end
         push!(samples_ak, res.ak0)
         push!(samples_mx_path, res.mx_path)
@@ -265,7 +248,6 @@ function process_T_directory(dir_path)
     final_node, err_node = calc_stats(samples_node)
 
     meta = reference_meta
-    params = reference_params
     omega_grid = meta["omega_grid"]
     dos_omega_grid = meta["dos_omega_grid"]
 
@@ -291,14 +273,6 @@ function process_T_directory(dir_path)
                          final_dos_M_patch, err_dos_M_patch)
     else
         rm(joinpath(dir_path, "spectra_dos_M_patch.csv"); force=true)
-    end
-
-    if length(samples_ldos0) == real_n
-        final_ldos0, err_ldos0 = calc_stats(samples_ldos0)
-        write_ldos_csv(joinpath(dir_path, "spectra_ldos0.csv"),
-                       final_ldos0, err_ldos0, params.Lx, params.Ly)
-    else
-        rm(joinpath(dir_path, "spectra_ldos0.csv"); force=true)
     end
 
     write_ak_csv(joinpath(dir_path, "spectra_ak0.csv"), final_ak, err_ak)

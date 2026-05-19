@@ -3,6 +3,7 @@ using Printf
 
 const DEFAULT_PATH_WINDOW_RADIUS = 1
 const DEFAULT_AN_PATH_WINDOW_RADIUS = 2
+const DEFAULT_AN_TOP_COUNT = 2
 
 function calc_stats(data_list)
     n_samples = length(data_list)
@@ -51,19 +52,6 @@ function write_ak_csv(path, mean_ak, err_ak)
     end
 end
 
-function write_ldos_csv(path, mean_ldos, err_ldos, Lx::Int, Ly::Int)
-    length(mean_ldos) == Lx * Ly || error("LDOS length does not match lattice size")
-    length(err_ldos) == length(mean_ldos) || error("LDOS error length mismatch")
-    open(path, "w") do io
-        println(io, "x,y,site,LDOS_0,Error")
-        for y in 1:Ly, x in 1:Lx
-            site = (y - 1) * Lx + x
-            @printf(io, "%d,%d,%d,%.6e,%.6e\n",
-                    x, y, site, mean_ldos[site], err_ldos[site])
-        end
-    end
-end
-
 function path_peak_window(path::AbstractMatrix,
                           omega_grid::AbstractVector;
                           radius::Int=DEFAULT_PATH_WINDOW_RADIUS)
@@ -79,9 +67,18 @@ function average_path_window(path::AbstractMatrix, lo::Int, hi::Int)
     return vec(mean(view(path, lo:hi, :); dims=1))
 end
 
+function average_path_indices(path::AbstractMatrix, indices::AbstractVector{Int})
+    return vec(mean(view(path, indices, :); dims=1))
+end
+
 function average_path_window_error(err_path::AbstractMatrix, lo::Int, hi::Int)
     n = hi - lo + 1
     return vec(sqrt.(sum(abs2, view(err_path, lo:hi, :); dims=1)) ./ n)
+end
+
+function average_path_index_error(err_path::AbstractMatrix, indices::AbstractVector{Int})
+    n = length(indices)
+    return vec(sqrt.(sum(abs2, view(err_path, indices, :); dims=1)) ./ n)
 end
 
 function path_observable(path::AbstractMatrix,
@@ -89,14 +86,24 @@ function path_observable(path::AbstractMatrix,
                          kx_vals::AbstractVector,
                          ky_vals::AbstractVector;
                          err_path=nothing,
-                         radius::Int=DEFAULT_PATH_WINDOW_RADIUS)
+                         radius::Int=DEFAULT_PATH_WINDOW_RADIUS,
+                         top_n::Union{Nothing, Int}=nothing)
     size(path, 1) == length(kx_vals) || error("path rows and kx metadata size mismatch")
     size(path, 1) == length(ky_vals) || error("path rows and ky metadata size mismatch")
     size(path, 2) == length(omega_grid) || error("path columns and omega grid size mismatch")
 
     peak_idx, lo, hi, idx0 = path_peak_window(path, omega_grid; radius=radius)
-    vals = average_path_window(path, lo, hi)
-    errs = err_path === nothing ? nothing : average_path_window_error(err_path, lo, hi)
+    if top_n === nothing
+        vals = average_path_window(path, lo, hi)
+        errs = err_path === nothing ? nothing : average_path_window_error(err_path, lo, hi)
+    else
+        top_n > 0 || error("top_n must be positive")
+        selected = sort(sortperm(@view path[:, idx0]; rev=true)[1:min(top_n, size(path, 1))])
+        lo = first(selected)
+        hi = last(selected)
+        vals = average_path_indices(path, selected)
+        errs = err_path === nothing ? nothing : average_path_index_error(err_path, selected)
+    end
 
     peak = (k_idx=peak_idx,
             kx=Float64(kx_vals[peak_idx]),
