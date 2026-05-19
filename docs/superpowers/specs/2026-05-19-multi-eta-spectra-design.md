@@ -50,7 +50,11 @@ eta_values = actual_spectra_eta .* spectra_eta_factors
 ```
 
 where `actual_spectra_eta` is the existing single-`η` value after the current
-TBC/non-TBC selection logic. The factors must be positive and non-empty.
+TBC/non-TBC selection logic. The factors must be non-empty, finite, positive,
+unique under approximate comparison, and the first factor must be `1`. Lists
+such as `[2, 4, 8]` and `[2, 1, 4]` are rejected instead of reordered. This
+keeps the first slice, default `eta_factor = 1`, old fields, and default CSV
+output aligned.
 
 Post-processing functions gain an optional selection keyword, defaulting to the
 old behavior:
@@ -100,8 +104,9 @@ Additional multi-`η` quantities written by the same framework:
 - `A_XG_path_eta`
 - `A_XG_node_patch_eta` for TBC spectra
 
-The existing single-`η` fields are still written using the first factor. This
-keeps old notebooks and scripts working.
+The existing single-`η` fields are still written using the first factor, which
+validation guarantees is `eta_factor = 1`. This keeps old notebooks and scripts
+working.
 
 ## JLD2 Data Format
 
@@ -113,6 +118,9 @@ spectra_eta_factors    :: Vector{Float64}
 eta_values             :: Vector{Float64}
 spectra_eta_base       :: Float64
 ```
+
+The first metadata entry is always `spectra_eta_factors[1] == 1`, so
+`eta_values[1] == spectra_eta_base`.
 
 Each `sweep_*` group adds fields with `η` as the first dimension:
 
@@ -129,7 +137,8 @@ A_XG_path_eta           :: Array{Float64,3}
 A_XG_node_patch_eta     :: Array{Float64,3}      # TBC only
 ```
 
-Existing fields remain present and equal to the first `η` slice:
+Existing fields remain present and equal to the first `η` slice, which is
+guaranteed to be `eta_factor = 1`:
 
 ```text
 opt_cond
@@ -178,7 +187,8 @@ continue to read `transport.csv` and therefore report the default
 - For floating-point factor matching, post-processing uses `isapprox` instead
   of exact equality.
 - Invalid `spectra_eta_factors` values are rejected at simulation startup:
-  empty lists, zero, negative, `NaN`, or `Inf`.
+  empty lists, zero, negative, `NaN`, `Inf`, duplicate factors, missing
+  factor `1`, or factor `1` appearing anywhere except the first entry.
 - If a config in an HPC ensemble has incompatible factors or malformed
   multi-`η` dimensions, the HPC post-processor skips that config with a warning,
   matching its existing incompatible-metadata strategy.
@@ -220,6 +230,8 @@ Expected cost:
 - Multi-`η` field first dimensions equal `length(eta_values)`.
 - For `eta_factor = 1`, the new multi-`η` first slices match old fields such as
   `A_MX_path`, `dos`, and `opt_cond`.
+- Validation rejects factor lists where `1` is missing or not first, including
+  `[2, 4, 8]` and `[2, 1, 4]`.
 - Synthetic JLD2 post-processing with deliberately different slices proves that
   `eta_factor = 4` exports the selected slice to the standard CSV filenames.
 - Old-format synthetic JLD2 still processes with `eta_factor = 1`.
