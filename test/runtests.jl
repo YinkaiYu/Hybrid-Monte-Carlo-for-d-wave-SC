@@ -7,6 +7,7 @@ using Test
     include("test_twisted_spectra.jl")
     include("test_simulation_tbc.jl")
     include("test_postprocess_spectra.jl")
+    include("test_hpc_scripts.jl")
 
     if get(ENV, "DWAVEHMC_RUN_SIMULATION_TESTS", "0") == "1"
         include("test_simulation.jl")

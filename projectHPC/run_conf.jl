@@ -61,11 +61,15 @@ if !isfile(params_path)
 end
 # 使用绝对路径 include
 include(params_path)
+actual_spectra_eta_factors = isdefined(@__MODULE__, :spectra_eta_factors) ?
+                             Float64.(getfield(@__MODULE__, :spectra_eta_factors)) :
+                             DwaveHMC.DEFAULT_SPECTRA_ETA_FACTORS
 
 println("Parameters loaded. T = $(T), Total Configs = $(N_conf)")
 flush(stdout)
 
 println("Spectra options: use_twisted_spectra=$(use_twisted_spectra), spectra_Ltw=$(spectra_Ltw), spectra_eta=$(spectra_eta), spectra_delta_omega=$(spectra_delta_omega)")
+println("Spectra eta factors: $(actual_spectra_eta_factors)")
 println("Twist stiffness options: measure_twist=$(measure_twist), twist_Ax=$(twist_Ax), twist_qy=$(twist_qy)")
 flush(stdout)
 
@@ -79,6 +83,7 @@ flush(stdout)
                                  spectra_Ltw, use_twisted_spectra,
                                  m_point_patch_half_width,
                                  spectra_eta, spectra_delta_omega,
+                                 spectra_eta_factors,
                                  measure_twist, twist_Ax, twist_qy)
     out_dir = "conf_$(seed)"
     Random.seed!(seed)
@@ -101,6 +106,7 @@ flush(stdout)
                        m_point_patch_half_width=m_point_patch_half_width,
                        spectra_eta=spectra_eta,
                        spectra_delta_omega=spectra_delta_omega,
+                       spectra_eta_factors=spectra_eta_factors,
                        measure_twist=measure_twist,
                        twist_Ax=twist_Ax,
                        twist_qy=twist_qy,
@@ -124,6 +130,7 @@ results = pmap(1:N_conf) do seed
                 spectra_Ltw, use_twisted_spectra,
                 m_point_patch_half_width,
                 spectra_eta, spectra_delta_omega,
+                actual_spectra_eta_factors,
                 measure_twist, twist_Ax, twist_qy)
 end
 

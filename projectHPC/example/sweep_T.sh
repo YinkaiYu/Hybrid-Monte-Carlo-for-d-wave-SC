@@ -3,13 +3,13 @@ set -e
 
 # ================= 配置区域 =================
 # 1. 扫描参数
-T_list=(0.020 0.025 0.030 0.035 0.040 0.045 0.050)
+T_list=(0.001 0.002 0.003 0.005 0.008 0.010 0.015 0.020 0.030 0.040 0.050)
 
 # 2. 并行与作业参数
 queue='node6348'
 N_NODES=1   # 每个作业申请多少个节点
-N_CORES=4   # 每个作业申请多少个核；run_conf.jl 会启动同数量 worker
-N_CONFS=4   # 每个温度跑多少个构型
+N_CORES=16  # 每个作业申请多少个核；run_conf.jl 会启动同数量 worker
+N_CONFS=16  # 每个温度跑多少个构型
 PROJECT_ROOT=/home/zxli_1/yyk2025/2511_dWaveBcs/20260511_TBC-spectra
 
 # 3. 物理参数
@@ -17,13 +17,13 @@ L=40
 t=1.0
 tp=-0.3
 # 模式开关: 1=目标密度n(热化调μ), 0=固定μ
-USE_TARGET_N=0
+USE_TARGET_N=1
 # 目标密度模式
-target_n=0.85
+target_n=7.316582713846e-01
 mu_init=-0.83
 # 固定化学势模式
 mu=-0.83
-W=1.0
+W=2.0
 n_imp=0.2
 V=0.5
 mass=1.0
@@ -32,11 +32,12 @@ mass=1.0
 omega_max=0.8
 spectra_Ltw=1
 use_twisted_spectra=false
+spectra_eta_factors="[1.0, 2.0, 5.0, 10.0, 20.0, 40.0, 60.0]"
 measure_twist=false
 twist_Ax=0.001
 
 # 5. HMC参数
-n_therm=200
+n_therm=100
 n_measure=1000
 Nt_therm_init=26
 Nt_measure=8
@@ -81,6 +82,7 @@ T = $T
 ω_max = $omega_max
 spectra_Ltw = $spectra_Ltw
 use_twisted_spectra = $use_twisted_spectra
+spectra_eta_factors = $spectra_eta_factors
 spectra_eta = η
 spectra_delta_omega = Δω
 m_point_patch_half_width = π / max(Lx, Ly)
@@ -134,7 +136,7 @@ EOF
     # 使用 $N_CORES 变量
     cat << EOF > submit.slurm
 #!/bin/sh
-#SBATCH -J yyk/d-wave/L${L}*${spectra_Ltw}/imp${n_imp}/T${T}
+#SBATCH -J yyk/d-wave/L${L}/imp${n_imp}/W${W}/T${T}
 #SBATCH -p $queue
 #SBATCH -N $N_NODES
 #SBATCH -n $N_CORES
