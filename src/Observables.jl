@@ -589,23 +589,25 @@ SpectrumResult
 用于存储 JLD2 的重型数据
 """
 struct SpectrumResult
-    # 标量结果
     superfluid_stiffness::Float64
     dc_conductivity::Float64
-    
-    # 谱学结果 (Arrays)
-    ω_grid::Vector{Float64}                 # 光电导用的 ω > 0
-    optical_conductivity::Vector{Float64}   # Re σ(ω)
-    dos_ω_grid::Vector{Float64}             # DOS 用的完整网格
-    dos::Vector{Float64}                    # N(ω)
-    dos_M::Vector{Float64}                   # M 点 (π,0)/(0,π) 的 DOS
-    ldos_ω0::Vector{Float64}                 # 局部态密度 N_i(ω=0)
-    
-    # 动量解析的谱权重 (可选，数据量巨大，通常只存特定路径或求和)
-    # 我们这里存: A(k, ω=0) (Fermi Surface) 和 DOS.
-    A_k_ω0::Matrix{Float64} # 费米面谱权重
-    A_MX_path::Matrix{Float64} # M(π,0) -> X(π,π) 路径上的 A(k,ω)
-    A_XG_path::Matrix{Float64} # Γ(0,0) -> X(π,π) 路径上的 A(k,ω)
+    ω_grid::Vector{Float64}
+    optical_conductivity::Vector{Float64}
+    dos_ω_grid::Vector{Float64}
+    dos::Vector{Float64}
+    dos_M::Vector{Float64}
+    ldos_ω0::Vector{Float64}
+    A_k_ω0::Matrix{Float64}
+    A_MX_path::Matrix{Float64}
+    A_XG_path::Matrix{Float64}
+    dc_conductivity_eta::Vector{Float64}
+    optical_conductivity_eta::Matrix{Float64}
+    dos_eta::Matrix{Float64}
+    dos_M_eta::Matrix{Float64}
+    ldos_ω0_eta::Matrix{Float64}
+    A_k_ω0_eta::Array{Float64, 3}
+    A_MX_path_eta::Array{Float64, 3}
+    A_XG_path_eta::Array{Float64, 3}
 end
 
 struct TransportResult
@@ -613,6 +615,8 @@ struct TransportResult
     dc_conductivity::Float64
     ω_grid::Vector{Float64}
     optical_conductivity::Vector{Float64}
+    dc_conductivity_eta::Vector{Float64}
+    optical_conductivity_eta::Matrix{Float64}
 end
 
 struct SpectraOnlyResult
@@ -623,13 +627,21 @@ struct SpectraOnlyResult
     A_k_ω0::Matrix{Float64}
     A_MX_path::Matrix{Float64}
     A_XG_path::Matrix{Float64}
+    dos_eta::Matrix{Float64}
+    dos_M_eta::Matrix{Float64}
+    ldos_ω0_eta::Matrix{Float64}
+    A_k_ω0_eta::Array{Float64, 3}
+    A_MX_path_eta::Array{Float64, 3}
+    A_XG_path_eta::Array{Float64, 3}
 end
 
 # ------------------------------------------------
 # 3. 核心测量函数
 # ------------------------------------------------
 
-function measure_transport_only(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
+function measure_transport_only(cache::ComputeCache, p::ModelParameters;
+                                eta_values::AbstractVector{<:Real}=Float64[p.η],
+                                reuse_buffers::Bool=false)
     N = p.N
     Ly = p.Ly
     dim = 2 * N
@@ -640,6 +652,11 @@ function measure_transport_only(cache::ComputeCache, p::ModelParameters; reuse_b
     ω_grid = cache.omega_grid
     σ_ω = cache.sigma_omega
     omega_inv = cache.omega_inv
+    eta_vals = Float64.(eta_values)
+    nη = length(eta_vals)
+    nη > 0 || error("eta_values must be non-empty")
+    all(isfinite, eta_vals) || error("eta_values must be finite")
+    all(>(0.0), eta_vals) || error("eta_values must be positive")
 
     # Keep this measurement correct even when called without measure_observables first.
     @inbounds @simd for n in 1:dim
@@ -729,10 +746,10 @@ function measure_transport_only(cache::ComputeCache, p::ModelParameters; reuse_b
     mul!(cache.temp_JU, cache.Jx_sparse_q0, U)
     mul!(cache.J_mn, U', cache.temp_JU)
     J_mn = cache.J_mn
-    
+
     # Grid
-    fill!(σ_ω, 0.0)
-    dc_cond = 0.0
+    σ_ω_eta = zeros(Float64, nη, length(ω_grid))
+    dc_cond_eta = zeros(Float64, nη)
     
     # Pre-calculate delta function broadening
     function lorentzian(x, η)
@@ -749,28 +766,40 @@ function measure_transport_only(cache::ComputeCache, p::ModelParameters; reuse_b
             # 1. DC Conductivity
             # sum (-f') |J|^2 delta(Em - En)
             # -f' = β * f * (1-f)
-            dc_cond += fprime * J2 * lorentzian(Em_En, p.η)
+            @inbounds for iη in 1:nη
+                dc_cond_eta[iη] += fprime * J2 * lorentzian(Em_En, eta_vals[iη])
+            end
             
             # 2. Optical Conductivity
             fn_fm = f[n] - f[m]
             if abs(fn_fm) < 1e-12 continue end
             @inbounds for (iω, ω) in enumerate(ω_grid)
-                σ_ω[iω] += (fn_fm * omega_inv[iω]) * J2 * lorentzian(ω - Em_En, p.η)
+                prefactor = (fn_fm * omega_inv[iω]) * J2
+                x = ω - Em_En
+                @simd for iη in 1:nη
+                    σ_ω_eta[iη, iω] += prefactor * lorentzian(x, eta_vals[iη])
+                end
             end
         end
     end
     
-    dc_cond *= (π / N)
-    σ_ω .*= (π / N)
+    dc_cond_eta .*= (π / N)
+    σ_ω_eta .*= (π / N)
+    dc_cond = dc_cond_eta[1]
+    copyto!(σ_ω, @view σ_ω_eta[1, :])
 
     if reuse_buffers
-        return TransportResult(superfluid_stiffness, dc_cond, ω_grid, σ_ω)
+        return TransportResult(superfluid_stiffness, dc_cond, ω_grid, σ_ω,
+                               dc_cond_eta, σ_ω_eta)
     end
 
-    return TransportResult(superfluid_stiffness, dc_cond, copy(ω_grid), copy(σ_ω))
+    return TransportResult(superfluid_stiffness, dc_cond, copy(ω_grid), copy(σ_ω),
+                           copy(dc_cond_eta), copy(σ_ω_eta))
 end
 
-function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
+function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters;
+                                   eta_values::AbstractVector{<:Real}=Float64[p.η],
+                                   reuse_buffers::Bool=false)
     N = p.N
     Lx = p.Lx
     Ly = p.Ly
@@ -784,13 +813,17 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     ak_map = cache.ak_map
     ak_mx_path = cache.ak_mx_path
     ak_xg_path = cache.ak_xg_path
-    lor_cache = cache.lor_cache
     mx_path_weights = cache.mx_path_weights
     xg_path_weights = cache.xg_path_weights
     x_idx = cache.x_idx
     y_idx = cache.y_idx
     parity_x = cache.parity_x
     parity_y = cache.parity_y
+    eta_vals = Float64.(eta_values)
+    nη = length(eta_vals)
+    nη > 0 || error("eta_values must be non-empty")
+    all(isfinite, eta_vals) || error("eta_values must be finite")
+    all(>(0.0), eta_vals) || error("eta_values must be positive")
 
     function lorentzian(x, η)
         return (1.0/π) * (η / (x^2 + η^2))
@@ -801,18 +834,20 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     # ------------------------------------------------
     # DOS 网格：从 -ω_max 到 +ω_max (或者稍微大一点，覆盖整个能带)
     # 我们这里使用对称的区间
-    fill!(dos_vals, 0.0)
-    fill!(dos_M_vals, 0.0)
-    fill!(ldos_ω0, 0.0)
-    fill!(ak_map, 0.0)
-
     # A(k,ω) along M(π,0) -> X(π,π) and Γ(0,0) -> X(π,π)
     _, mx_ky_indices, _, _ = mx_kpath(p)
     xg_kx_indices, xg_ky_indices, _, _ = xg_kpath(p)
     n_mx_path = length(mx_ky_indices)
     n_xg_path = length(xg_kx_indices)
-    fill!(ak_mx_path, 0.0)
-    fill!(ak_xg_path, 0.0)
+    nω = length(dos_ω_grid)
+    dos_eta = zeros(Float64, nη, nω)
+    dos_M_eta = zeros(Float64, nη, nω)
+    ldos_eta = zeros(Float64, nη, N)
+    ak_eta = zeros(Float64, nη, Lx, Ly)
+    ak_mx_eta = zeros(Float64, nη, n_mx_path, nω)
+    ak_xg_eta = zeros(Float64, nη, n_xg_path, nω)
+    lor_eta = zeros(Float64, nη, nω)
+    zero_lor_eta = zeros(Float64, nη)
     
     @inbounds for n in 1:dim
         En = E[n]
@@ -838,8 +873,11 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
         weight_M = 0.5 * (abs2(sum_pi_0) + abs2(sum_0_pi)) / N
 
         # 3. Cache Lorentzian values for this eigenstate
-        @inbounds for iw in eachindex(dos_ω_grid)
-            lor_cache[iw] = lorentzian(dos_ω_grid[iw] - En, p.η)
+        @inbounds for iw in 1:nω
+            x = dos_ω_grid[iw] - En
+            @simd for iη in 1:nη
+                lor_eta[iη, iw] = lorentzian(x, eta_vals[iη])
+            end
         end
 
         @inbounds for i in 1:N
@@ -848,10 +886,12 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
         mul!(cache.u_k_cache, cache.fft_plan, cache.u_r_cache)
 
         # 4. Add to DOS and M-point DOS
-        @inbounds for iw in eachindex(dos_ω_grid)
-            lor_val = lor_cache[iw]
-            dos_vals[iw] += w_n * lor_val
-            dos_M_vals[iw] += weight_M * lor_val
+        @inbounds for iw in 1:nω
+            @simd for iη in 1:nη
+                lor_val = lor_eta[iη, iw]
+                dos_eta[iη, iw] += w_n * lor_val
+                dos_M_eta[iη, iw] += weight_M * lor_val
+            end
         end
 
         # 5. A(k,ω) along kx=π M-X path (1D FFT along y)
@@ -869,10 +909,12 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
         @inbounds for (idx, ky_idx) in enumerate(mx_ky_indices)
             mx_path_weights[idx] = abs2(cache.u_pi_k_cache[ky_idx]) / N
         end
-        @inbounds for iw in eachindex(dos_ω_grid)
-            lor_val = lor_cache[iw]
-            @simd for k in 1:n_mx_path
-                ak_mx_path[k, iw] += mx_path_weights[k] * lor_val
+        @inbounds for iw in 1:nω
+            for k in 1:n_mx_path
+                weight = mx_path_weights[k]
+                @simd for iη in 1:nη
+                    ak_mx_eta[iη, k, iw] += weight * lor_eta[iη, iw]
+                end
             end
         end
 
@@ -880,47 +922,72 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
         @inbounds for idx in 1:n_xg_path
             xg_path_weights[idx] = abs2(cache.u_k_cache[xg_kx_indices[idx], xg_ky_indices[idx]]) / N
         end
-        @inbounds for iw in eachindex(dos_ω_grid)
-            lor_val = lor_cache[iw]
-            @simd for k in 1:n_xg_path
-                ak_xg_path[k, iw] += xg_path_weights[k] * lor_val
+        @inbounds for iw in 1:nω
+            for k in 1:n_xg_path
+                weight = xg_path_weights[k]
+                @simd for iη in 1:nη
+                    ak_xg_eta[iη, k, iw] += weight * lor_eta[iη, iw]
+                end
             end
         end
         
         # 7. Spectral Function A(k,0) (Fermi Surface intensity)
         # Check if En is close to 0 (within η)
-        weight_at_zero = lorentzian(-En, p.η)
+        @inbounds @simd for iη in 1:nη
+            zero_lor_eta[iη] = lorentzian(-En, eta_vals[iη])
+        end
 
-        @inbounds @simd for i in 1:N
-            ldos_ω0[i] += abs2(U[i, n]) * weight_at_zero
+        @inbounds for i in 1:N
+            site_weight = abs2(U[i, n])
+            @simd for iη in 1:nη
+                ldos_eta[iη, i] += site_weight * zero_lor_eta[iη]
+            end
         end
         
-        if weight_at_zero > 1e-6
-            # Add to map: |u_k|^2 * delta(E)
-            for y in 1:Ly, x in 1:Lx
-                ak_map[x, y] += abs2(cache.u_k_cache[x, y]) * weight_at_zero
+        # Add to map: |u_k|^2 * delta(E)
+        @inbounds for y in 1:Ly, x in 1:Lx
+            uk2 = abs2(cache.u_k_cache[x, y])
+            for iη in 1:nη
+                if zero_lor_eta[iη] > 1e-6
+                    ak_eta[iη, x, y] += uk2 * zero_lor_eta[iη]
+                end
             end
         end
     end
     
-    dos_vals ./= N
-    ak_map ./= N # Normalization of FFT
+    dos_eta ./= N
+    ak_eta ./= N # Normalization of FFT
     # FFTW definition: backward fft (default) is unnormalized sum. 
     # 1/sqrt(N) factor in definition means |FFT|^2 / N.
 
+    copyto!(dos_vals, @view dos_eta[1, :])
+    copyto!(dos_M_vals, @view dos_M_eta[1, :])
+    copyto!(ldos_ω0, @view ldos_eta[1, :])
+    copyto!(ak_map, @view ak_eta[1, :, :])
+    copyto!(ak_mx_path, @view ak_mx_eta[1, :, :])
+    copyto!(ak_xg_path, @view ak_xg_eta[1, :, :])
+
     if reuse_buffers
         return SpectraOnlyResult(dos_ω_grid, dos_vals, dos_M_vals, ldos_ω0,
-                                 ak_map, ak_mx_path, ak_xg_path)
+                                 ak_map, ak_mx_path, ak_xg_path,
+                                 dos_eta, dos_M_eta, ldos_eta,
+                                 ak_eta, ak_mx_eta, ak_xg_eta)
     end
 
     return SpectraOnlyResult(copy(dos_ω_grid), copy(dos_vals), copy(dos_M_vals),
                              copy(ldos_ω0), copy(ak_map), copy(ak_mx_path),
-                             copy(ak_xg_path))
+                             copy(ak_xg_path), copy(dos_eta), copy(dos_M_eta),
+                             copy(ldos_eta), copy(ak_eta), copy(ak_mx_eta),
+                             copy(ak_xg_eta))
 end
 
-function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
-    transport = measure_transport_only(cache, p; reuse_buffers=reuse_buffers)
-    spectra = measure_untwisted_spectra(cache, p; reuse_buffers=reuse_buffers)
+function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters;
+                                       eta_values::AbstractVector{<:Real}=Float64[p.η],
+                                       reuse_buffers::Bool=false)
+    transport = measure_transport_only(cache, p; eta_values=eta_values,
+                                       reuse_buffers=reuse_buffers)
+    spectra = measure_untwisted_spectra(cache, p; eta_values=eta_values,
+                                        reuse_buffers=reuse_buffers)
 
     return SpectrumResult(transport.superfluid_stiffness,
                           transport.dc_conductivity,
@@ -932,5 +999,13 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
                           spectra.ldos_ω0,
                           spectra.A_k_ω0,
                           spectra.A_MX_path,
-                          spectra.A_XG_path)
+                          spectra.A_XG_path,
+                          transport.dc_conductivity_eta,
+                          transport.optical_conductivity_eta,
+                          spectra.dos_eta,
+                          spectra.dos_M_eta,
+                          spectra.ldos_ω0_eta,
+                          spectra.A_k_ω0_eta,
+                          spectra.A_MX_path_eta,
+                          spectra.A_XG_path_eta)
 end

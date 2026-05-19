@@ -280,6 +280,29 @@ end
     @test combined.A_XG_path ≈ spectra.A_XG_path
 end
 
+@testset "untwisted multi eta first slice compatibility" begin
+    Random.seed!(20260520)
+    p = ModelParameters(4, 4, 1.0, -0.35, -0.5, 0.0, 0.0, 8.0, 1.0, 1.0;
+                        η=0.25, Δω=0.25, ω_max=2.0)
+    state = initialize_state(p)
+    cache = initialize_cache(p)
+    init_static_H!(cache, p, state)
+    update_H_BdG!(cache, p, state)
+    diagonalize_H_BdG!(cache, p)
+
+    eta_values = [p.η, 2p.η]
+    spec = measure_transport_and_spectra(cache, p; eta_values=eta_values)
+
+    @test length(spec.dc_conductivity_eta) == 2
+    @test size(spec.optical_conductivity_eta) == (2, length(spec.ω_grid))
+    @test size(spec.dos_eta) == (2, length(spec.dos_ω_grid))
+    @test size(spec.A_MX_path_eta, 1) == 2
+    @test spec.dc_conductivity == spec.dc_conductivity_eta[1]
+    @test spec.optical_conductivity == vec(spec.optical_conductivity_eta[1, :])
+    @test spec.dos == vec(spec.dos_eta[1, :])
+    @test spec.A_MX_path == spec.A_MX_path_eta[1, :, :]
+end
+
 @testset "Twisted spectra measurement" begin
     p, state, cache = setup_tbc_fixture()
 
@@ -326,6 +349,28 @@ end
     @test all(isfinite, tw2.A_MX_path)
     @test all(isfinite, tw2.A_XG_path)
     @test all(isfinite, tw2.A_XG_node_patch)
+end
+
+@testset "TBC multi eta first slice compatibility" begin
+    Random.seed!(20260520)
+    p = ModelParameters(4, 4, 1.0, -0.35, -0.5, 0.0, 0.0, 8.0, 1.0, 1.0;
+                        η=0.25, Δω=0.25, ω_max=2.0)
+    state = initialize_state(p)
+    cache = initialize_cache(p)
+
+    tw = measure_twisted_spectra(cache, p, state;
+                                 Ltw=2,
+                                 spectra_eta=p.η,
+                                 spectra_delta_omega=p.Δω,
+                                 eta_values=[p.η, 2p.η])
+
+    @test size(tw.dos_eta, 1) == 2
+    @test size(tw.A_MX_path_eta, 1) == 2
+    @test size(tw.A_XG_node_patch_eta, 1) == 2
+    @test tw.dos == vec(tw.dos_eta[1, :])
+    @test tw.dos_M_patch == vec(tw.dos_M_patch_eta[1, :])
+    @test tw.A_MX_path == tw.A_MX_path_eta[1, :, :]
+    @test tw.A_XG_node_patch == tw.A_XG_node_patch_eta[1, :, :]
 end
 
 @testset "Twisted spectra repeated-supercell regression" begin

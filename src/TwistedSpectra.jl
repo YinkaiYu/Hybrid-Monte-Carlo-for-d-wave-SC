@@ -11,6 +11,14 @@ struct TwistedSpectraResult
     A_MX_path::Matrix{Float64}
     A_XG_path::Matrix{Float64}
     A_XG_node_patch::Matrix{Float64}
+    dos_eta::Matrix{Float64}
+    dos_M_eta::Matrix{Float64}
+    dos_M_patch_eta::Matrix{Float64}
+    ldos_ω0_eta::Matrix{Float64}
+    A_k_ω0_eta::Array{Float64, 3}
+    A_MX_path_eta::Array{Float64, 3}
+    A_XG_path_eta::Array{Float64, 3}
+    A_XG_node_patch_eta::Array{Float64, 3}
     kx_grid::Vector{Float64}
     ky_grid::Vector{Float64}
     mx_path_kx::Float64
@@ -216,10 +224,16 @@ function measure_twisted_spectra(cache::ComputeCache,
                                  m_point_patch_half_width::Float64=π / max(p.Lx, p.Ly),
                                  spectra_eta::Float64=p.η,
                                  spectra_delta_omega::Float64=p.Δω,
+                                 eta_values::AbstractVector{<:Real}=Float64[spectra_eta],
                                  reuse_buffers::Bool=false)
     Ltw <= 0 && error("Ltw must be positive")
     m_point_patch_half_width < 0 && error("m_point_patch_half_width must be nonnegative")
     spectra_eta > 0 || error("spectra_eta must be positive")
+    eta_vals = Float64.(eta_values)
+    nη = length(eta_vals)
+    nη > 0 || error("eta_values must be non-empty")
+    all(isfinite, eta_vals) || error("eta_values must be finite")
+    all(>(0.0), eta_vals) || error("eta_values must be positive")
 
     N = p.N
     dim = 2 * N
@@ -243,7 +257,16 @@ function measure_twisted_spectra(cache::ComputeCache,
     A_MX_path = zeros(Float64, length(mx_path_ky), nω)
     A_XG_path = zeros(Float64, length(xg_path_kx), nω)
     A_XG_node_patch = zeros(Float64, length(xg_path_kx), nω)
-    lor_cache = zeros(Float64, nω)
+    dos_eta = zeros(Float64, nη, nω)
+    dos_M_eta = zeros(Float64, nη, nω)
+    dos_M_patch_eta = zeros(Float64, nη, nω)
+    ldos_eta = zeros(Float64, nη, N)
+    A_k0_eta = zeros(Float64, nη, Lx_eff, Ly_eff)
+    A_MX_path_eta = zeros(Float64, nη, length(mx_path_ky), nω)
+    A_XG_path_eta = zeros(Float64, nη, length(xg_path_kx), nω)
+    A_XG_node_patch_eta = zeros(Float64, nη, length(xg_path_kx), nω)
+    lor_eta = zeros(Float64, nη, nω)
+    zero_lor_eta = zeros(Float64, nη)
 
     kx_grid = effective_k_grid(Lx, Ltw)
     ky_grid = effective_k_grid(Ly, Ltw)
@@ -319,9 +342,12 @@ function measure_twisted_spectra(cache::ComputeCache,
                 w_n += abs2(vecs[i, n])
             end
 
-            for iw in eachindex(dos_ω_grid)
-                lor_cache[iw] = lorentzian_spectra(dos_ω_grid[iw] - En, spectra_eta)
-                dos_vals[iw] += w_n * lor_cache[iw]
+            for iw in 1:nω
+                x = dos_ω_grid[iw] - En
+                @simd for iη in 1:nη
+                    lor_eta[iη, iw] = lorentzian_spectra(x, eta_vals[iη])
+                    dos_eta[iη, iw] += w_n * lor_eta[iη, iw]
+                end
             end
 
             for y in 1:Ly, x in 1:Lx
@@ -339,15 +365,22 @@ function measure_twisted_spectra(cache::ComputeCache,
                 exact_weight += 0.5 * abs2(cache.u_k_cache[mx_zero + 1, my_pi + 1]) / N
             end
             if has_pi_0_sector || has_0_pi_sector
-                for iw in eachindex(dos_ω_grid)
-                    dos_M_vals[iw] += exact_weight * lor_cache[iw]
+                for iw in 1:nω
+                    @simd for iη in 1:nη
+                        dos_M_eta[iη, iw] += exact_weight * lor_eta[iη, iw]
+                    end
                 end
             end
 
             patch_weight = 0.0
-            weight_at_zero = lorentzian_spectra(-En, spectra_eta)
-            @inbounds @simd for i in 1:N
-                ldos_ω0[i] += abs2(vecs[i, n]) * weight_at_zero
+            @inbounds @simd for iη in 1:nη
+                zero_lor_eta[iη] = lorentzian_spectra(-En, eta_vals[iη])
+            end
+            @inbounds for i in 1:N
+                site_weight = abs2(vecs[i, n])
+                @simd for iη in 1:nη
+                    ldos_eta[iη, i] += site_weight * zero_lor_eta[iη]
+                end
             end
             for my in 0:Ly-1, mx in 0:Lx-1
                 Ix = twist_fft_to_effective_index(mx, nx, Lx, Ltw)
@@ -358,13 +391,18 @@ function measure_twisted_spectra(cache::ComputeCache,
                     patch_weight += wk
                 end
 
-                if weight_at_zero > 1e-6
-                    A_k0[Ix + 1, Iy + 1] += abs2(cache.u_k_cache[mx + 1, my + 1]) * weight_at_zero
+                uk2 = abs2(cache.u_k_cache[mx + 1, my + 1])
+                for iη in 1:nη
+                    if zero_lor_eta[iη] > 1e-6
+                        A_k0_eta[iη, Ix + 1, Iy + 1] += uk2 * zero_lor_eta[iη]
+                    end
                 end
             end
             patch_weight /= patch_count
-            for iw in eachindex(dos_ω_grid)
-                dos_M_patch_vals[iw] += patch_weight * lor_cache[iw]
+            for iw in 1:nω
+                @simd for iη in 1:nη
+                    dos_M_patch_eta[iη, iw] += patch_weight * lor_eta[iη, iw]
+                end
             end
 
             if nx == nx_pi
@@ -373,8 +411,10 @@ function measure_twisted_spectra(cache::ComputeCache,
                     if Iy <= fld(Ly_eff, 2)
                         wk = abs2(cache.u_k_cache[mx_pi + 1, my + 1]) / N
                         path_idx = Iy + 1
-                        for iw in eachindex(dos_ω_grid)
-                            A_MX_path[path_idx, iw] += wk * lor_cache[iw]
+                        for iw in 1:nω
+                            @simd for iη in 1:nη
+                                A_MX_path_eta[iη, path_idx, iw] += wk * lor_eta[iη, iw]
+                            end
                         end
                     end
                 end
@@ -383,24 +423,37 @@ function measure_twisted_spectra(cache::ComputeCache,
             for path_idx in eachindex(xg_path_kx)
                 if nx == xg_nx[path_idx] && ny == xg_ny[path_idx]
                     wk = abs2(cache.u_k_cache[xg_mx[path_idx] + 1, xg_my[path_idx] + 1]) / N
-                    for iw in eachindex(dos_ω_grid)
-                        A_XG_path[path_idx, iw] += wk * lor_cache[iw]
+                    for iw in 1:nω
+                        @simd for iη in 1:nη
+                            A_XG_path_eta[iη, path_idx, iw] += wk * lor_eta[iη, iw]
+                        end
                     end
                 end
             end
 
             for (path_idx, mx_term, my_term, weight_factor) in xg_patch_terms_by_sector[sector_idx]
                 wk = weight_factor * abs2(cache.u_k_cache[mx_term + 1, my_term + 1]) / N
-                for iw in eachindex(dos_ω_grid)
-                    A_XG_node_patch[path_idx, iw] += wk * lor_cache[iw]
+                for iw in 1:nω
+                    @simd for iη in 1:nη
+                        A_XG_node_patch_eta[iη, path_idx, iw] += wk * lor_eta[iη, iw]
+                    end
                 end
             end
         end
     end
 
-    dos_vals ./= (N * Ltw^2)
-    ldos_ω0 ./= Ltw^2
-    A_k0 ./= N
+    dos_eta ./= (N * Ltw^2)
+    ldos_eta ./= Ltw^2
+    A_k0_eta ./= N
+
+    copyto!(dos_vals, @view dos_eta[1, :])
+    copyto!(dos_M_vals, @view dos_M_eta[1, :])
+    copyto!(dos_M_patch_vals, @view dos_M_patch_eta[1, :])
+    copyto!(ldos_ω0, @view ldos_eta[1, :])
+    copyto!(A_k0, @view A_k0_eta[1, :, :])
+    copyto!(A_MX_path, @view A_MX_path_eta[1, :, :])
+    copyto!(A_XG_path, @view A_XG_path_eta[1, :, :])
+    copyto!(A_XG_node_patch, @view A_XG_node_patch_eta[1, :, :])
 
     return TwistedSpectraResult(
         dos_ω_grid,
@@ -412,6 +465,14 @@ function measure_twisted_spectra(cache::ComputeCache,
         reuse_buffers ? A_MX_path : copy(A_MX_path),
         reuse_buffers ? A_XG_path : copy(A_XG_path),
         reuse_buffers ? A_XG_node_patch : copy(A_XG_node_patch),
+        reuse_buffers ? dos_eta : copy(dos_eta),
+        reuse_buffers ? dos_M_eta : copy(dos_M_eta),
+        reuse_buffers ? dos_M_patch_eta : copy(dos_M_patch_eta),
+        reuse_buffers ? ldos_eta : copy(ldos_eta),
+        reuse_buffers ? A_k0_eta : copy(A_k0_eta),
+        reuse_buffers ? A_MX_path_eta : copy(A_MX_path_eta),
+        reuse_buffers ? A_XG_path_eta : copy(A_XG_path_eta),
+        reuse_buffers ? A_XG_node_patch_eta : copy(A_XG_node_patch_eta),
         kx_grid,
         ky_grid,
         mx_path_kx,
