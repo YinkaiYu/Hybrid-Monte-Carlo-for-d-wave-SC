@@ -3,7 +3,6 @@ using Printf
 
 const DEFAULT_PATH_WINDOW_RADIUS = 1
 const DEFAULT_AN_PATH_WINDOW_RADIUS = 2
-const DEFAULT_AN_TOP_COUNT = 2
 
 function calc_stats(data_list)
     n_samples = length(data_list)
@@ -48,6 +47,19 @@ function write_ak_csv(path, mean_ak, err_ak)
             if ky > π ky -= 2π end
             @printf(io, "%d,%d,%.6f,%.6f,%.6e,%.6e\n",
                     x, y, kx, ky, mean_ak[x, y], err_ak[x, y])
+        end
+    end
+end
+
+function write_ldos_csv(path, mean_ldos, err_ldos, Lx::Int, Ly::Int)
+    length(mean_ldos) == Lx * Ly || error("LDOS length does not match lattice size")
+    length(err_ldos) == length(mean_ldos) || error("LDOS error length mismatch")
+    open(path, "w") do io
+        println(io, "x,y,site,LDOS_0,Error")
+        for y in 1:Ly, x in 1:Lx
+            site = (y - 1) * Lx + x
+            @printf(io, "%d,%d,%d,%.6e,%.6e\n",
+                    x, y, site, mean_ldos[site], err_ldos[site])
         end
     end
 end

@@ -11,6 +11,7 @@ const SPECTRA_OUTPUT_FILES = [
     "spectra_dos.csv",
     "spectra_dos_M.csv",
     "spectra_dos_M_patch.csv",
+    "spectra_ldos0.csv",
     "spectra_ak0.csv",
     "spectra_MX_path.csv",
     "spectra_XG_path.csv",
@@ -63,6 +64,8 @@ function process_single_config(jld_path)
             sum_ak = copy(g1["A_k0"])
             sum_mx_path = copy(g1["A_MX_path"])
             sum_xg_path = copy(g1["A_XG_path"])
+            has_ldos0 = haskey(g1, "LDOS_0")
+            sum_ldos0 = has_ldos0 ? copy(g1["LDOS_0"]) : nothing
             has_node_patch = haskey(g1, "A_XG_node_patch")
             node_source_key = has_node_patch ? "A_XG_node_patch" : "A_XG_path"
             sum_node_path = copy(g1[node_source_key])
@@ -78,12 +81,18 @@ function process_single_config(jld_path)
                 if haskey(g, "A_XG_node_patch") != has_node_patch
                     return nothing
                 end
+                if haskey(g, "LDOS_0") != has_ldos0
+                    return nothing
+                end
                 sum_opt .+= g["opt_cond"]
                 sum_dos .+= g["dos"]
                 sum_dos_M .+= g["dos_M"]
                 sum_ak .+= g["A_k0"]
                 sum_mx_path .+= g["A_MX_path"]
                 sum_xg_path .+= g["A_XG_path"]
+                if has_ldos0
+                    sum_ldos0 .+= g["LDOS_0"]
+                end
                 sum_node_path .+= g[node_source_key]
                 if has_patch
                     sum_dos_M_patch .+= g["dos_M_patch"]
@@ -96,6 +105,7 @@ function process_single_config(jld_path)
                    dos_M=sum_dos_M ./ count,
                    dos_M_patch=has_patch ? (sum_dos_M_patch ./ count) : nothing,
                    ak0=sum_ak ./ count,
+                   ldos0=has_ldos0 ? (sum_ldos0 ./ count) : nothing,
                    mx_path=sum_mx_path ./ count,
                    xg_path=sum_xg_path ./ count,
                    node_path=sum_node_path ./ count,
@@ -104,7 +114,8 @@ function process_single_config(jld_path)
                    meta=meta)
 
             if any(isnan, res.opt) || any(isnan, res.dos) || any(isnan, res.dos_M) ||
-               any(isnan, res.ak0) || any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
+               any(isnan, res.ak0) || (res.ldos0 !== nothing && any(isnan, res.ldos0)) ||
+               any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
                any(isnan, res.node_path) ||
                (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
                 return nothing
@@ -139,6 +150,7 @@ function compatibility_signature(res)
         dos_M_size=size(res.dos_M),
         dos_M_patch_size=res.dos_M_patch === nothing ? nothing : size(res.dos_M_patch),
         ak0_size=size(res.ak0),
+        ldos0_size=res.ldos0 === nothing ? nothing : size(res.ldos0),
         mx_path_size=size(res.mx_path),
         xg_path_size=size(res.xg_path),
         node_path_size=size(res.node_path),
@@ -179,12 +191,12 @@ function process_T_directory(dir_path)
     samples_dos_M = []
     samples_dos_M_patch = []
     samples_ak = []
+    samples_ldos0 = []
     samples_mx_path = []
     samples_xg_path = []
-    samples_AN = []
-    samples_node = []
-    peak_rows = []
+    samples_node_path = []
     reference_meta = nothing
+    reference_params = nothing
     reference_signature = nothing
 
     for c_dir in conf_dirs
@@ -198,6 +210,7 @@ function process_T_directory(dir_path)
         if reference_signature === nothing
             reference_signature = sig
             reference_meta = res.meta
+            reference_params = res.params
         else
             mismatches = compatibility_mismatches(reference_signature, sig)
             if !isempty(mismatches)
@@ -206,15 +219,6 @@ function process_T_directory(dir_path)
             end
         end
 
-        mx_kx = fill(res.meta["mx_path_kx"], length(res.meta["mx_path_ky"]))
-        AN_spectrum, _, peak_AN = path_observable(res.mx_path, res.meta["dos_omega_grid"],
-                                                  mx_kx, res.meta["mx_path_ky"];
-                                                  top_n=DEFAULT_AN_TOP_COUNT)
-        node_radius = res.node_from_patch ? 0 : DEFAULT_PATH_WINDOW_RADIUS
-        node_spectrum, _, peak_node = path_observable(res.node_path, res.meta["dos_omega_grid"],
-                                                      res.meta["xg_path_kx"], res.meta["xg_path_ky"];
-                                                      radius=node_radius)
-
         push!(samples_opt, res.opt)
         push!(samples_dos, res.dos)
         push!(samples_dos_M, res.dos_M)
@@ -222,12 +226,12 @@ function process_T_directory(dir_path)
             push!(samples_dos_M_patch, res.dos_M_patch)
         end
         push!(samples_ak, res.ak0)
+        if res.ldos0 !== nothing
+            push!(samples_ldos0, res.ldos0)
+        end
         push!(samples_mx_path, res.mx_path)
         push!(samples_xg_path, res.xg_path)
-        push!(samples_AN, AN_spectrum)
-        push!(samples_node, node_spectrum)
-        push!(peak_rows, (source=basename(c_dir), kind="AN", peak_AN...))
-        push!(peak_rows, (source=basename(c_dir), kind="node", peak_node...))
+        push!(samples_node_path, res.node_path)
     end
 
     real_n = length(samples_opt)
@@ -244,8 +248,7 @@ function process_T_directory(dir_path)
     final_ak, err_ak = calc_stats(samples_ak)
     final_mx_path, err_mx_path = calc_stats(samples_mx_path)
     final_xg_path, err_xg_path = calc_stats(samples_xg_path)
-    final_AN, err_AN = calc_stats(samples_AN)
-    final_node, err_node = calc_stats(samples_node)
+    final_node_path, err_node_path = calc_stats(samples_node_path)
 
     meta = reference_meta
     omega_grid = meta["omega_grid"]
@@ -277,6 +280,15 @@ function process_T_directory(dir_path)
 
     write_ak_csv(joinpath(dir_path, "spectra_ak0.csv"), final_ak, err_ak)
 
+    if length(samples_ldos0) == real_n
+        final_ldos0, err_ldos0 = calc_stats(samples_ldos0)
+        write_ldos_csv(joinpath(dir_path, "spectra_ldos0.csv"),
+                       final_ldos0, err_ldos0,
+                       reference_params.Lx, reference_params.Ly)
+    else
+        rm(joinpath(dir_path, "spectra_ldos0.csv"); force=true)
+    end
+
     mx_kx = fill(meta["mx_path_kx"], length(meta["mx_path_ky"]))
     mx_kx_idx = fill(meta["mx_path_kx_idx"], length(meta["mx_path_ky"]))
     write_path_csv(joinpath(dir_path, "spectra_MX_path.csv"), final_mx_path,
@@ -285,11 +297,21 @@ function process_T_directory(dir_path)
     write_path_csv(joinpath(dir_path, "spectra_XG_path.csv"), final_xg_path,
                    err_xg_path, dos_omega_grid, meta["xg_path_kx"],
                    meta["xg_path_ky"], meta["xg_path_kx_idx"], meta["xg_path_ky_idx"])
+    final_AN, err_AN, peak_AN = path_observable(final_mx_path, dos_omega_grid,
+                                                mx_kx, meta["mx_path_ky"];
+                                                err_path=err_mx_path,
+                                                radius=DEFAULT_AN_PATH_WINDOW_RADIUS)
+    final_node, err_node, peak_node = path_observable(final_node_path, dos_omega_grid,
+                                                      meta["xg_path_kx"], meta["xg_path_ky"];
+                                                      err_path=err_node_path,
+                                                      radius=0)
     write_series_csv(joinpath(dir_path, "spectra_dos_AN.csv"),
                      "omega,DOS_AN,Error", dos_omega_grid, final_AN, err_AN)
     write_series_csv(joinpath(dir_path, "spectra_dos_node.csv"),
                      "omega,DOS_node,Error", dos_omega_grid, final_node, err_node)
-    write_peak_summary(joinpath(dir_path, "spectra_path_peaks.csv"), peak_rows)
+    write_peak_summary(joinpath(dir_path, "spectra_path_peaks.csv"),
+                       [(source="ensemble", kind="AN", peak_AN...),
+                        (source="ensemble", kind="node", peak_node...)])
 end
 
 function main()

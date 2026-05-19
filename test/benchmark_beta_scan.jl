@@ -9,13 +9,9 @@ using DelimitedFiles
 # 辅助函数
 # ==========================================
 
-function calc_optimal_dt(β, J, mass, Nt)
-    T = 2 * π * sqrt(mass * J / β) 
-    return T / (2 * Nt) 
-end
-
-function calc_BCS_RHS(Δ_in, Lx, Ly, t, tp, μ, β, J)
+function calc_BCS_RHS(Δ_in, Lx, Ly, t, tp, μ, β, V)
     if abs(Δ_in) < 1e-9; return 0.0; end
+    g_pair = V / 2
     sum_term = 0.0
     for ny in 0:Ly-1, nx in 0:Lx-1
         kx = 2π * nx / Lx; ky = 2π * ny / Ly
@@ -25,7 +21,7 @@ function calc_BCS_RHS(Δ_in, Lx, Ly, t, tp, μ, β, J)
         term = (g_k^2) / (2 * E_k) * tanh(0.5 * β * E_k)
         sum_term += term
     end
-    return (J / (Lx*Ly)) * sum_term * Δ_in
+    return (g_pair / (Lx*Ly)) * sum_term * Δ_in
 end
 
 # ==========================================
@@ -46,7 +42,7 @@ function run_beta_scan()
     t, tp = 1.0, -0.35
     μ = -1.08
     W, n_imp = 3.0, 0.0
-    J = 1.6
+    V = 1.6
     mass = 1.0
     dt_dummy = 0.05
     n_therm = 60    
@@ -62,7 +58,7 @@ function run_beta_scan()
     acc_rates    = zeros(n_points) # 存储接受率
     
     # 4. 初始化
-    p_init = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, betas[1], J, mass)
+    p_init = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, betas[1], V, mass)
     state = initialize_state(p_init)
     cache = initialize_cache(p_init)
     
@@ -78,10 +74,10 @@ function run_beta_scan()
     println("-"^75)
     
     for (idx, β) in enumerate(betas)
-        p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass)
+        p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass)
         
         # 热化
-        dt_therm = calc_optimal_dt(p.β, p.J, p.mass, Nt_therm)
+        dt_therm = calc_optimal_dt(p.β, p.V, p.mass, Nt_therm)
         for _ in 1:n_therm
             hmc_sweep!(cache, p, state; Nt=Nt_therm, dt=dt_therm)
         end
@@ -91,7 +87,7 @@ function run_beta_scan()
         samples_pair   = zeros(n_measure)
         samples_diff   = zeros(n_measure)
         
-        dt_meas = calc_optimal_dt(p.β, p.J, p.mass, Nt_measure)
+        dt_meas = calc_optimal_dt(p.β, p.V, p.mass, Nt_measure)
         
         n_accepted = 0 # 计数器
         
@@ -120,7 +116,7 @@ function run_beta_scan()
         err_Δ_pair[idx]   = std(samples_pair) / sqrt(n_measure)
         err_Δ_diff[idx]   = std(samples_diff) / sqrt(n_measure)
         
-        avg_Δ_rhs[idx] = calc_BCS_RHS(avg_Δ_pair[idx], Lx, Ly, t, tp, μ, β, J)
+        avg_Δ_rhs[idx] = calc_BCS_RHS(avg_Δ_pair[idx], Lx, Ly, t, tp, μ, β, V)
         
         # 打印包含接受率的信息
         @printf("%-10.2f | %-8.2f | %-10.5f | %-10.5f | %-10.5f | %-10.5f\n", 

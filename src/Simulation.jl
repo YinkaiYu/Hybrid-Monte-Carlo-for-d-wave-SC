@@ -6,10 +6,12 @@ using JLD2
 """
     calc_optimal_dt(β, V, mass, Nt)
 
-根据谐振子近似计算推荐的时间步长 δt。
+根据谐振子近似计算推荐的时间步长 δt。这里的输入 V 是 t-V/PRB
+物理耦合，辅助场有效配对耦合为 g_pair = V/2。
 """
 function calc_optimal_dt(β, V, mass, Nt)
-    T = 2 * π * sqrt(mass * V / β)
+    g_pair = V / 2
+    T = 2 * π * sqrt(mass * g_pair / β)
     return T / (2 * Nt) 
 end
 

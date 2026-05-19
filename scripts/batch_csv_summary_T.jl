@@ -6,7 +6,7 @@ using Printf
 # 1. 设置
 # ==========================================
 # 修改：匹配之前的 T_scan 目录命名格式
-target_dir = "data/T_scan_L24_J0.8_W1.0_imp0.05_mu_-1.08" 
+target_dir = "data/T_scan_L24_V0.8_W1.0_imp0.05_mu_-1.08"
 
 output_filename = "summary_all.csv"
 

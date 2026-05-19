@@ -3,7 +3,7 @@ using DwaveHMC
 
 include(joinpath(@__DIR__, "spectra_postprocess_utils.jl"))
 
-target_dir = "data/test_spectra_L24_J0.8_W1.0_imp0.0_T0.001_mu-1.4"
+target_dir = "data/test_spectra_L24_V0.8_W1.0_imp0.0_T0.001_mu-1.4"
 
 function read_required_metadata(file)
     return (

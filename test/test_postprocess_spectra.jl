@@ -2,8 +2,8 @@ using Test
 using JLD2
 using DwaveHMC
 
-const PROCESS_TARGET_REL = joinpath("data", "test_spectra_L24_J0.8_W1.0_imp0.0_T0.001_mu-1.4")
-const BATCH_ROOT_REL = joinpath("data", "T_scan_L24_J0.8_W1.0_imp0.05_mu_-1.08")
+const PROCESS_TARGET_REL = joinpath("data", "test_spectra_L24_V0.8_W1.0_imp0.0_T0.001_mu-1.4")
+const BATCH_ROOT_REL = joinpath("data", "T_scan_L24_V0.8_W1.0_imp0.05_mu_-1.08")
 
 module ProcessSpectraScript
 include(normpath(joinpath(@__DIR__, "..", "scripts", "process_spectra.jl")))

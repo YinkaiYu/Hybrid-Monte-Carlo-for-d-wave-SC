@@ -11,7 +11,7 @@ Lx, Ly = 24, 24
 t, tp = 1.0, -0.35
 μ = -1.08
 W, n_imp = 1.0, 0.05
-J = 0.8
+V = 0.8
 mass = 1.0
 
 η = 8.0 / (Lx*Ly) * 1.0
@@ -36,14 +36,14 @@ measure_freq = 1
 bin_size = 10 
 
 # 输出目录名称为 T_scan
-base_dir = "data/T_scan_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)_mu_$(μ)"
+base_dir = "data/T_scan_L$(Lx)_V$(V)_W$(W)_imp$(n_imp)_mu_$(μ)"
 if !isdir(base_dir)
     mkpath(base_dir)
 end
 
 println("==================================================")
 println("Start Temperature Sweep Test")
-println("L=$Lx, J=$J, n_imp=$(n_imp)")
+println("L=$Lx, V=$V, n_imp=$(n_imp)")
 println("Temperatures: $Ts")
 println("==================================================")
 
@@ -58,7 +58,7 @@ for (i, T) in enumerate(Ts)
     
     # 构造参数
     # 将计算出的 β 传入 ModelParameters
-    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass, η=η, Δω=Δω, ω_max=ω_max)
+    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass, η=η, Δω=Δω, ω_max=ω_max)
     
     # 子目录以 T 命名
     work_dir = joinpath(base_dir, "T_$(round(T, sigdigits=3))")

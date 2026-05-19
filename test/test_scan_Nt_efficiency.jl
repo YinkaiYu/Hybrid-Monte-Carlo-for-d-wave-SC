@@ -11,7 +11,7 @@ t, tp, μ = 1.0, -0.35, -1.08
 # 2. 【关键】开启杂质，模拟真实工况
 W, n_imp = 3.0, 0.078
 
-β, J = 20.0, 0.8
+β, V = 20.0, 0.8
 mass = 1.0
 
 # 3. 【关键】向左扫描，寻找崩溃点
@@ -22,9 +22,8 @@ n_warmup = 100
 n_measure = 100
 # =========================================
 
-# 理论周期计算
-T_period = 4 * π * sqrt(mass * J / β)
-L_target = T_period / 2
+# 理论半周期轨道长度；calc_optimal_dt 内部使用 g_pair = V/2
+L_target = calc_optimal_dt(β, V, mass, 1)
 
 println("Target Trajectory Length L = $(round(L_target, digits=3))")
 
@@ -33,7 +32,7 @@ efficiencies = Float64[] # 存 Acc / Nt
 
 for Nt in Nt_list
     dt = L_target / Nt
-    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, dt, mass)
+    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass)
     
     state = initialize_state(p)
     cache = initialize_cache(p)
@@ -43,13 +42,13 @@ for Nt in Nt_list
     
     # 预热
     for _ in 1:n_warmup
-        hmc_sweep!(cache, p, state; Nt=Nt)
+        hmc_sweep!(cache, p, state; Nt=Nt, dt=dt)
     end
     
     # 测量
     accepted_count = 0
     for _ in 1:n_measure
-        acc, _ = hmc_sweep!(cache, p, state; Nt=Nt)
+        acc, _ = hmc_sweep!(cache, p, state; Nt=Nt, dt=dt)
         accepted_count += acc
     end
     

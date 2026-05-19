@@ -1,5 +1,11 @@
 ## 物理可观测量
 
+当前 `t-V-model` 分支中，输入 `V` 是物理耦合；程序内部用于费米子配对 gap 估计的耦合为
+$$
+g_{\rm pair}=\frac{V}{2}.
+$$
+辅助场 $\Delta_{ij}$ 是直接进入 BdG 矩阵的 gap。因此 self-consistency 检查和 fermionic pair observable 都使用 $g_{\rm pair}$，而不是直接使用 `V`。
+
 Pair field 的幅度
 $$
 \Delta_{\text{amplitude}} = \frac{1}{N} \sum_i \frac{|\Delta_{i, i+\hat{x}}| + |\Delta_{i, i+\hat{y}}|}{2}
@@ -252,7 +258,7 @@ $\Gamma-X$ 对角线确定的节点附近谱函数 $A_{\mathrm{node}}(\omega)$�
 $$A_M(\omega)\equiv \frac12 \left[A(\mathbf{k}=(\pi,0), \omega)+A(\mathbf{k}=(0,\pi), \omega)\right]$$
 仍会输出，但它不再被命名为反节点谱。我们还关注局部的 d-wave 配对强度
 $$
-\Delta_{\text{localpair}} = \frac{J}{N} \sum_i 
+\Delta_{\text{localpair}} = \frac{g_{\rm pair}}{N} \sum_i
 \left| \frac{\braket{ c_{i\uparrow} c_{i+\hat{x}\downarrow} - c_{i\downarrow} c_{i+\hat{x}\uparrow}} - \braket{ c_{i\uparrow} c_{i+\hat{y}\downarrow} - c_{i\downarrow} c_{i+\hat{y}\uparrow}}}{2} \right|
 $$
 
@@ -260,11 +266,11 @@ $$
 
 之前的测量是这样的
 $$
-|\Delta|_{\text{global}} = \overline{\frac{J}{N} \left|\sum_i 
+|\Delta|_{\text{global}} = \overline{\frac{g_{\rm pair}}{N} \left|\sum_i
 \frac{\braket{ c_{i\uparrow} c_{i+\hat{x}\downarrow} - c_{i\downarrow} c_{i+\hat{x}\uparrow}} - \braket{ c_{i\uparrow} c_{i+\hat{y}\downarrow} - c_{i\downarrow} c_{i+\hat{y}\uparrow}}}{2} \right|}
 $$
 $$
-|\Delta|_{\text{local}} = \overline{\frac{J}{N} \sum_i 
+|\Delta|_{\text{local}} = \overline{\frac{g_{\rm pair}}{N} \sum_i
 \left| \frac{\braket{ c_{i\uparrow} c_{i+\hat{x}\downarrow} - c_{i\downarrow} c_{i+\hat{x}\uparrow}} - \braket{ c_{i\uparrow} c_{i+\hat{y}\downarrow} - c_{i\downarrow} c_{i+\hat{y}\uparrow}}}{2} \right|}
 $$
 其中 $\overline{\cdot}$ 表示对辅助场的蒙卡平均，$\braket{\cdot}$ 表示费米子算符求迹，$\sum_i$ 表示对 $N$  个空间格点求和。
@@ -275,7 +281,7 @@ $$
 
 记配对算符为
 $$
-d_i = \frac{J}{2}\left( c_{i\uparrow} c_{i+\hat{x}\downarrow} - c_{i\downarrow} c_{i+\hat{x}\uparrow} -  c_{i\uparrow} c_{i+\hat{y}\downarrow} - c_{i\downarrow} c_{i+\hat{y}\uparrow} \right)
+d_i = \frac{g_{\rm pair}}{2}\left( c_{i\uparrow} c_{i+\hat{x}\downarrow} - c_{i\downarrow} c_{i+\hat{x}\uparrow} -  c_{i\uparrow} c_{i+\hat{y}\downarrow} - c_{i\downarrow} c_{i+\hat{y}\uparrow} \right)
 $$
 $$
 D = \frac{1}{N}\sum_i d_i

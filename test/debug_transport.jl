@@ -9,11 +9,11 @@ using Printf
 Lx, Ly = 10, 10
 t, tp, μ = 1.0, -0.35, -1.0 # 稍微调整 mu 确保有粒子
 W, n_imp = 0.0, 0.0 
-β, J = 1000.0, 1.6 # 低温，超导相
-p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, 0.1, 1.0)
+β, V = 1000.0, 1.6 # 低温，超导相
+p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, 1.0)
 
 println("--- Debugging Environment ---")
-println("Params: β=$β, μ=$μ")
+println("Params: β=$β, V=$V, μ=$μ")
 
 # 2. 初始化
 state = initialize_state(p)

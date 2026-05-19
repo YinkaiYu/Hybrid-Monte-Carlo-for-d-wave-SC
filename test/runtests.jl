@@ -2,6 +2,7 @@ using Test
 
 @testset "DwaveHMC default test suite" begin
     include("test_core_smoke.jl")
+    include("test_pairing_convention.jl")
     include("test_twist_stiffness.jl")
     include("test_twisted_spectra.jl")
     include("test_simulation_tbc.jl")

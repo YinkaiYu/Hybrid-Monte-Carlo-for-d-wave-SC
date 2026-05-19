@@ -1,6 +1,7 @@
 module DwaveHMC
 
 export ModelParameters, SimulationState, ComputeCache
+export pairing_coupling
 export initialize_state, initialize_cache
 export init_static_H!, update_H_BdG!, diagonalize_H_BdG!
 export compute_forces!

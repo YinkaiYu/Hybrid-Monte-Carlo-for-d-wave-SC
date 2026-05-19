@@ -9,13 +9,12 @@ tp = -0.35 # 笔记中的数值
 W = 1.0    # 笔记中的数值
 n_imp = 0.1
 β = 10.0
-J = 1.0
-dt = 0.05
+V = 1.0
 mass = 1.0
 
 println("Initializing Parameters...")
 # 这里可以直接传 Int 或 Float，构造函数会自动处理
-p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, dt, mass)
+p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass)
 
 println("System: $(p.Lx)x$(p.Ly), t'=$(p.tp), μ=$(p.μ), β=$(p.β)")
 

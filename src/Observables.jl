@@ -8,7 +8,7 @@ using JLD2
     compute_forces!(cache::ComputeCache, p::ModelParameters, state::SimulationState)
 
 计算 HMC 演化所需的力 F_ij，并存储在 cache.forces 中。
-公式：F_ij = -β/V * ( Δ_ij - V * P_ij )
+公式：F_ij = -β/g * ( Δ_ij - g * P_ij ), 其中 g = V/2.
 其中 P_ij = <c_i↑ c_j↓ - c_i↓ c_j↑> = -ρ_{i, j+N} - ρ_{j, i+N}
 """
 function compute_forces!(cache::ComputeCache, p::ModelParameters, state::SimulationState)
@@ -18,7 +18,8 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
     E = cache.E_n
     f = cache.fermi_factors
     
-    β_over_V = p.β / p.V
+    g_pair = pairing_coupling(p)
+    β_over_g = p.β / g_pair
 
     # 预计算费米分布
     @inbounds @simd for n in 1:(2*N)
@@ -54,7 +55,7 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
             
             # 计算力 F_ij
             Δ_val = state.Δ[i, dir]
-            forces[i, dir] = -β_over_V * (Δ_val - p.V * P_ij)
+            forces[i, dir] = -β_over_g * (Δ_val - g_pair * P_ij)
         end
     end
     
@@ -374,9 +375,9 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     end
 
     # 2. 玻色子势能部分
-    # E_boson = (β / V) * sum(|Δ|^2)
+    # E_boson = (β / g_pair) * sum(|Δ|^2) = (2β / V) * sum(|Δ|^2)
     # 使用 sum(f, itr) 极其高效，无内存分配
-    coef_boson = p.β / p.V
+    coef_boson = p.β / pairing_coupling(p)
     E_boson = coef_boson * sum(abs2, state.Δ)
 
     total_energy = (E_fermion + E_boson)/N
@@ -392,6 +393,7 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
     d_local = cache.d_local_cache
     U = cache.U
     E = cache.E_n
+    g_pair = pairing_coupling(p)
     
     # 重新刷新 fermi factors (确保是最新的)
     @inbounds @simd for n in 1:(2*N)
@@ -423,14 +425,14 @@ function measure_observables(cache::ComputeCache, p::ModelParameters, state::Sim
         end
         P_y = -ρ_1y - ρ_2y
         
-        # 1. Diff: |Δ - V*P|
+        # 1. Diff: |Δ - g_pair*P|
         # 记得 state.Δ 也是 (N, 2)
-        diff_x = abs(state.Δ[i, 1] - p.V * P_x)
-        diff_y = abs(state.Δ[i, 2] - p.V * P_y)
+        diff_x = abs(state.Δ[i, 1] - g_pair * P_x)
+        diff_y = abs(state.Δ[i, 2] - g_pair * P_y)
         sum_diff += (diff_x + diff_y) / 2.0 # 平均每个 bond 的偏差
         
-        # 2. Pair order parameter (from fermions): V * (P_x - P_y)/2
-        term = p.V * 0.5 * (P_x - P_y)
+        # 2. Pair order parameter (from fermions): g_pair * (P_x - P_y)/2
+        term = g_pair * 0.5 * (P_x - P_y)
         d_local[i] = term
         sum_pair_local += abs(term)
         sum_pair_global += term

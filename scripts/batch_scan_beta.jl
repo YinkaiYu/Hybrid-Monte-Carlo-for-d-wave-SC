@@ -11,7 +11,7 @@ Lx, Ly = 12, 12
 t, tp = 1.0, -0.35
 μ = -1.08
 W, n_imp = 1.0, 0.0
-J = 0.8
+V = 0.8
 mass = 1.0
 
 η = 8.0 / (Lx*Ly) * 1.0
@@ -35,14 +35,14 @@ measure_freq = 1
 bin_size = 10 # JLD2 分箱大小 (这里主要关注 CSV，这个参数不太影响)
 
 # 输出总目录
-base_dir = "data/beta_test_L$(Lx)_J$(J)_W$(W)_imp$(n_imp)"
+base_dir = "data/beta_test_L$(Lx)_V$(V)_W$(W)_imp$(n_imp)"
 if !isdir(base_dir)
     mkpath(base_dir)
 end
 
 println("==================================================")
 println("Start Beta Sweep Test")
-println("L=$Lx, J=$J, n_imp=$(n_imp)")
+println("L=$Lx, V=$V, n_imp=$(n_imp)")
 println("Betas: $betas")
 println("==================================================")
 
@@ -54,7 +54,7 @@ for (i, β) in enumerate(betas)
     
     # 构造参数
     # 注意：eta_scale 和 domega 即使不测光谱也需要给默认值
-    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass, η=η, Δω=Δω, ω_max=ω_max)
+    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass, η=η, Δω=Δω, ω_max=ω_max)
     
     # 子目录
     work_dir = joinpath(base_dir, "beta_$(round(β, digits=3))")

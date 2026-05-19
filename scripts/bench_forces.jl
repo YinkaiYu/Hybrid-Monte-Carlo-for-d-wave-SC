@@ -25,15 +25,15 @@ function setup_data(N)
     forces = zeros(ComplexF64, N, 2)
     
     # 参数
-    J = 1.0
+    g_pair = 0.5
     beta_term = 0.5
     Delta = rand(ComplexF64, N, 2)
     
-    return N, U, f, nn_table, forces, J, beta_term, Delta
+    return N, U, f, nn_table, forces, g_pair, beta_term, Delta
 end
 
 # --- 2. 原始写法 (Row-major access) ---
-function compute_forces_orig!(forces, U, f, nn_table, N, J, beta_term, Delta)
+function compute_forces_orig!(forces, U, f, nn_table, N, g_pair, beta_term, Delta)
     fill!(forces, 0.0im)
     
     @inbounds for i in 1:N
@@ -50,16 +50,16 @@ function compute_forces_orig!(forces, U, f, nn_table, N, J, beta_term, Delta)
             end
             
             P_ij = -ρ_1 - ρ_2
-            forces[i, dir] = -beta_term * (Delta[i, dir] - J * P_ij)
+            forces[i, dir] = -beta_term * (Delta[i, dir] - g_pair * P_ij)
         end
     end
 end
 
 # --- 3. 优化写法 (Column-major access / Loop Reordering) ---
-function compute_forces_opt!(forces, U, f, nn_table, N, J, beta_term, Delta)
+function compute_forces_opt!(forces, U, f, nn_table, N, g_pair, beta_term, Delta)
     # 先计算 P_ij 矩阵，或者直接累加到 forces 里
     # 为了避免创建中间大矩阵 P_ij，我们先用 Delta 初始化 forces
-    # Force = -beta_term * Delta + beta_term * J * P_ij
+    # Force = -beta_term * Delta + beta_term * g_pair * P_ij
     
     # 1. 初始化部分
     @inbounds for dir in 1:2, i in 1:N
@@ -70,11 +70,11 @@ function compute_forces_opt!(forces, U, f, nn_table, N, J, beta_term, Delta)
     # P_ij = - sum_n ( U[i,n]*f*U[j+N,n]* + ... )
     # 我们把 n 放在最外层！
     
-    coef = -beta_term * J # 注意公式里的符号，这里做个演示
-    # 实际公式: Force += (-beta_term * -J) * (- rho_1 - rho_2)
-    #           Force += (beta_term * J) * (- rho_1 - rho_2)
-    #           Force -= (beta_term * J) * (rho_1 + rho_2)
-    c = beta_term * J 
+    coef = -beta_term * g_pair # 注意公式里的符号，这里做个演示
+    # 实际公式: Force += (-beta_term * -g_pair) * (- rho_1 - rho_2)
+    #           Force += (beta_term * g_pair) * (- rho_1 - rho_2)
+    #           Force -= (beta_term * g_pair) * (rho_1 + rho_2)
+    c = beta_term * g_pair
     
     @inbounds for n in 1:(2*N)
         fn = f[n]
@@ -100,8 +100,9 @@ function compute_forces_opt!(forces, U, f, nn_table, N, J, beta_term, Delta)
                 
                 # 累加到 forces
                 # P_ij contribution: - (term1 + term2)
-                # Force contribution: - beta_term * (-J * ( - term1 - term2)) 
-                #Wait, F = -C * (D - J*P). P = -rho. F = -C*D + C*J*(-rho) = -C*D - C*J*rho.
+                # Force contribution: - beta_term * (-g_pair * ( - term1 - term2))
+                # Wait, F = -C * (D - g_pair*P). P = -rho.
+                # F = -C*D + C*g_pair*(-rho) = -C*D - C*g_pair*rho.
                 
                 forces[i, dir] -= c * (term1 + term2)
             end
@@ -114,12 +115,12 @@ N = 16 * 16 # 256 sites -> Matrix size 512x512
 println("Benchmarking with N=$N sites (Matrix size $(2*N)x$(2*N))...")
 
 data = setup_data(N)
-N_val, U, f, nn, F1, J, B, D = data
+N_val, U, f, nn, F1, g_pair, B, D = data
 F2 = copy(F1)
 
 # 预热
-compute_forces_orig!(F1, U, f, nn, N_val, J, B, D)
-compute_forces_opt!(F2, U, f, nn, N_val, J, B, D)
+compute_forces_orig!(F1, U, f, nn, N_val, g_pair, B, D)
+compute_forces_opt!(F2, U, f, nn, N_val, g_pair, B, D)
 
 # 检查正确性
 diff = maximum(abs.(F1 - F2))
@@ -129,7 +130,7 @@ if diff > 1e-10
 end
 
 println("\n--- Original (Row-major inner loop) ---")
-@btime compute_forces_orig!($F1, $U, $f, $nn, $N_val, $J, $B, $D)
+@btime compute_forces_orig!($F1, $U, $f, $nn, $N_val, $g_pair, $B, $D)
 
 println("\n--- Optimized (Column-major outer loop) ---")
-@btime compute_forces_opt!( $F2, $U, $f, $nn, $N_val, $J, $B, $D)
+@btime compute_forces_opt!( $F2, $U, $f, $nn, $N_val, $g_pair, $B, $D)

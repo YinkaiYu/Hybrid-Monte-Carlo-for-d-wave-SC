@@ -4,16 +4,12 @@ using LinearAlgebra
 using Statistics
 using DelimitedFiles
 
-function calc_optimal_dt(β, J, mass, Nt)
-    T = 2 * π * sqrt(mass * J / β) # 周期
-    return T / (2 * Nt) # 半周期分 Nt 步
-end
-
 # ==========================================
 # 1. 定义解析计算函数 (RHS of Gap Equation)
 # ==========================================
-function calc_BCS_RHS(Δ_in, Lx, Ly, t, tp, μ, β, J)
+function calc_BCS_RHS(Δ_in, Lx, Ly, t, tp, μ, β, V)
     N = Lx * Ly
+    g_pair = V / 2
     sum_term = 0.0
     
     # 遍历 k 空间 (离散化)
@@ -31,7 +27,7 @@ function calc_BCS_RHS(Δ_in, Lx, Ly, t, tp, μ, β, J)
         
         E_k = sqrt(ε_k^2 + abs2(Δ_k))
         
-        # 自洽方程右边项: (J/N) * sum_k g_k * (Δ_k / 2E_k) * tanh(βE_k/2)
+        # 自洽方程右边项: (g_pair/N) * sum_k g_k * (Δ_k / 2E_k) * tanh(βE_k/2)
         # 注意 Δ_k 包含 Δ_in，这里我们提取 Δ_in，
         # term = (g_k * g_k) * (1 / 2E_k) * tanh(...)
         
@@ -39,7 +35,7 @@ function calc_BCS_RHS(Δ_in, Lx, Ly, t, tp, μ, β, J)
         sum_term += val
     end
     
-    return (J / N) * sum_term * Δ_in
+    return (g_pair / N) * sum_term * Δ_in
 end
 
 # ==========================================
@@ -54,7 +50,7 @@ function run_benchmark_clean()
     μ = -1.08
     W, n_imp = 0.0, 0.0 # Clean limit
     β = 180.0  
-    J = 1.6   
+    V = 1.6
     
     
     # 自动步长
@@ -67,7 +63,7 @@ function run_benchmark_clean()
     Nt_therm = 20 # 热化时的 leapfrog 步数
     Nt_measure = 5 # 测量时的 leapfrog 步数
     
-    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, J, mass)
+    p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass)
     
     # 初始化
     state = initialize_state(p)
@@ -83,14 +79,14 @@ function run_benchmark_clean()
     
     # 热化
     println("Thermalizing...")
-    dt_therm = calc_optimal_dt(p.β, p.J, p.mass, Nt_therm)
+    dt_therm = calc_optimal_dt(p.β, p.V, p.mass, Nt_therm)
     for i in 1:n_therm
         hmc_sweep!(cache, p, state; Nt=Nt_therm, dt=dt_therm)
     end
     
     # 测量
     println("Measuring...")
-    dt_meas = calc_optimal_dt(p.β, p.J, p.mass, Nt_measure)
+    dt_meas = calc_optimal_dt(p.β, p.V, p.mass, Nt_measure)
     Δ_history = Float64[]
     
     for i in 1:n_measure
@@ -109,7 +105,7 @@ function run_benchmark_clean()
     
     # 代入自洽方程检验
     # 我们把 HMC 算出来的 Δ 扔进方程右边，看看能不能算回自己
-    Δ_rhs = calc_BCS_RHS(Δ_hmc_mean, Lx, Ly, t, tp, μ, β, J)
+    Δ_rhs = calc_BCS_RHS(Δ_hmc_mean, Lx, Ly, t, tp, μ, β, V)
     
     @printf("BCS RHS(Δ_hmc)  : %.6f\n", Δ_rhs)
     

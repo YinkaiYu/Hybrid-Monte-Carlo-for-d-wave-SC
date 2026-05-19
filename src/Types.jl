@@ -30,7 +30,7 @@ struct ModelParameters
 
     # HMC / 相互作用参数
     β::Float64   # 逆温度
-    V::Float64      # 耦合常数 (benchmark-note 记号)
+    V::Float64      # t-V/PRB 物理耦合；BdG gap 规范下的有效配对耦合是 V/2
     mass::Float64   # HMC 虚拟质量
     μ_tune_gain::Float64    # μ 调节比例系数
     μ_tune_interval::Int    # μ 调节间隔 (sweeps)
@@ -55,10 +55,22 @@ end
 
 function Base.getproperty(p::ModelParameters, sym::Symbol)
     if sym === :J
+        # Compatibility alias for older benchmark scripts. In this branch the
+        # physical t-V coupling V is the quantity that maps to main-branch J.
         return getfield(p, :V)
     end
     return getfield(p, sym)
 end
+
+"""
+    pairing_coupling(p)
+
+Return the effective coupling multiplying the singlet pair amplitude in the
+t-V convention used by this branch. The input `p.V` is the physical/PRB
+coupling, while the auxiliary field stored in `state.Δ` is the BdG gap itself,
+so the saddle equation is `Δ = (V/2) P`.
+"""
+@inline pairing_coupling(p::ModelParameters) = 0.5 * p.V
 
 function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool, target_n, W, n_imp, β, V, mass;
                                  μ_tune_gain::Float64, μ_tune_interval::Int, μ_tune_step_max::Float64,

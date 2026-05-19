@@ -6,7 +6,7 @@ using Printf
 # 1. 设置
 # ==========================================
 # 请修改为你存放数据的目录
-target_dir = "data/beta_test_L24_J0.8_W1.0_imp0.0_mu_-1.4" 
+target_dir = "data/beta_test_L24_V0.8_W1.0_imp0.0_mu_-1.4"
 
 output_filename = "summary_all.csv"
 
