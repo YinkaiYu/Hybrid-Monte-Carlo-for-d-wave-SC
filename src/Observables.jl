@@ -610,6 +610,38 @@ struct SpectrumResult
     A_XG_path_eta::Array{Float64, 3}
 end
 
+function SpectrumResult(superfluid_stiffness::Float64,
+                        dc_conductivity::Float64,
+                        ω_grid::Vector{Float64},
+                        optical_conductivity::Vector{Float64},
+                        dos_ω_grid::Vector{Float64},
+                        dos::Vector{Float64},
+                        dos_M::Vector{Float64},
+                        ldos_ω0::Vector{Float64},
+                        A_k_ω0::Matrix{Float64},
+                        A_MX_path::Matrix{Float64},
+                        A_XG_path::Matrix{Float64})
+    return SpectrumResult(superfluid_stiffness,
+                          dc_conductivity,
+                          ω_grid,
+                          optical_conductivity,
+                          dos_ω_grid,
+                          dos,
+                          dos_M,
+                          ldos_ω0,
+                          A_k_ω0,
+                          A_MX_path,
+                          A_XG_path,
+                          [dc_conductivity],
+                          reshape(copy(optical_conductivity), 1, :),
+                          reshape(copy(dos), 1, :),
+                          reshape(copy(dos_M), 1, :),
+                          reshape(copy(ldos_ω0), 1, :),
+                          reshape(copy(A_k_ω0), 1, size(A_k_ω0, 1), size(A_k_ω0, 2)),
+                          reshape(copy(A_MX_path), 1, size(A_MX_path, 1), size(A_MX_path, 2)),
+                          reshape(copy(A_XG_path), 1, size(A_XG_path, 1), size(A_XG_path, 2)))
+end
+
 struct TransportResult
     superfluid_stiffness::Float64
     dc_conductivity::Float64
