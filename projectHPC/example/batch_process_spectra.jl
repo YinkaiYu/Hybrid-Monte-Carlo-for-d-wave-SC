@@ -52,12 +52,16 @@ function is_eta_selection_error(e)
            occursin("selected eta factor", msg) ||
            occursin("eta-first array", msg) ||
            occursin("eta dimension", msg) ||
-           occursin("compatible with", msg)
+           occursin("compatible with", msg) ||
+           occursin("Incompatible spectra config", msg)
 end
 
 function selected_eta_value(file, eta_idx::Int, eta_factor)
     if haskey(file, "eta_values")
-        return Float64(file["eta_values"][eta_idx])
+        values = file["eta_values"]
+        length(values) >= eta_idx ||
+            error("eta_values expected eta dimension >= $eta_idx; actual length $(length(values))")
+        return Float64(values[eta_idx])
     end
 
     isapprox(Float64(eta_factor), 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0) ||
@@ -71,15 +75,27 @@ end
 
 function selected_transport_eta_value(file, eta_idx::Int, eta_factor)
     if haskey(file, "transport_eta_values")
-        return Float64(file["transport_eta_values"][eta_idx])
+        values = file["transport_eta_values"]
+        length(values) >= eta_idx ||
+            error("transport_eta_values expected eta dimension >= $eta_idx; actual length $(length(values))")
+        return Float64(values[eta_idx])
     elseif haskey(file, "eta_values")
-        return Float64(file["eta_values"][eta_idx])
+        values = file["eta_values"]
+        length(values) >= eta_idx ||
+            error("eta_values expected eta dimension >= $eta_idx; actual length $(length(values))")
+        return Float64(values[eta_idx])
     end
 
     isapprox(Float64(eta_factor), 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0) ||
         error("Missing transport eta metadata for eta_factor=$eta_factor")
 
     return Float64(file["params"].η)
+end
+
+function require_same_shape(label::AbstractString, candidate, reference)
+    size(candidate) == size(reference) ||
+        error("$label expected shape $(size(reference)) compatible with first sweep; actual size $(size(candidate))")
+    return candidate
 end
 
 function process_single_config(jld_path; eta_factor=1)
@@ -120,32 +136,32 @@ function process_single_config(jld_path; eta_factor=1)
             for i in 2:length(sweep_keys)
                 g = file[sweep_keys[i]]
                 if (haskey(g, "dos_M_patch") || haskey(g, "dos_M_patch_eta")) != has_patch
-                    return nothing
+                    error("Incompatible spectra config: dos_M_patch presence changes across sweeps")
                 end
                 if (haskey(g, "A_XG_node_patch") || haskey(g, "A_XG_node_patch_eta")) != has_node_patch
-                    return nothing
+                    error("Incompatible spectra config: A_XG_node_patch presence changes across sweeps")
                 end
                 if (haskey(g, "LDOS_0") || haskey(g, "LDOS_0_eta")) != has_ldos0
-                    return nothing
+                    error("Incompatible spectra config: LDOS_0 presence changes across sweeps")
                 end
                 if (haskey(g, "dc_cond_eta") || haskey(g, "dc_cond")) != has_dc
-                    return nothing
+                    error("Incompatible spectra config: dc_cond presence changes across sweeps")
                 end
                 if has_dc
                     sum_dc += selected_scalar(g, "dc_cond_eta", "dc_cond", eta_idx)
                 end
-                sum_opt .+= selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx)
-                sum_dos .+= selected_vector(g, "dos_eta", "dos", eta_idx)
-                sum_dos_M .+= selected_vector(g, "dos_M_eta", "dos_M", eta_idx)
-                sum_ak .+= selected_matrix(g, "A_k0_eta", "A_k0", eta_idx)
-                sum_mx_path .+= selected_matrix(g, "A_MX_path_eta", "A_MX_path", eta_idx)
-                sum_xg_path .+= selected_matrix(g, "A_XG_path_eta", "A_XG_path", eta_idx)
+                sum_opt .+= require_same_shape("opt_cond", selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx), sum_opt)
+                sum_dos .+= require_same_shape("dos", selected_vector(g, "dos_eta", "dos", eta_idx), sum_dos)
+                sum_dos_M .+= require_same_shape("dos_M", selected_vector(g, "dos_M_eta", "dos_M", eta_idx), sum_dos_M)
+                sum_ak .+= require_same_shape("A_k0", selected_matrix(g, "A_k0_eta", "A_k0", eta_idx), sum_ak)
+                sum_mx_path .+= require_same_shape("A_MX_path", selected_matrix(g, "A_MX_path_eta", "A_MX_path", eta_idx), sum_mx_path)
+                sum_xg_path .+= require_same_shape("A_XG_path", selected_matrix(g, "A_XG_path_eta", "A_XG_path", eta_idx), sum_xg_path)
                 if has_ldos0
-                    sum_ldos0 .+= selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx)
+                    sum_ldos0 .+= require_same_shape("LDOS_0", selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx), sum_ldos0)
                 end
-                sum_node_path .+= selected_matrix(g, node_multi_key, node_source_key, eta_idx)
+                sum_node_path .+= require_same_shape(node_source_key, selected_matrix(g, node_multi_key, node_source_key, eta_idx), sum_node_path)
                 if has_patch
-                    sum_dos_M_patch .+= selected_vector(g, "dos_M_patch_eta", "dos_M_patch", eta_idx)
+                    sum_dos_M_patch .+= require_same_shape("dos_M_patch", selected_vector(g, "dos_M_patch_eta", "dos_M_patch", eta_idx), sum_dos_M_patch)
                 end
                 count += 1
             end
