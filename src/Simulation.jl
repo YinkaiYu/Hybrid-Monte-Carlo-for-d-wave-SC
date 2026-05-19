@@ -135,6 +135,7 @@ end
                    use_twisted_spectra::Bool=spectra_Ltw > 1,
                    m_point_patch_half_width::Float64=π / max(p.Lx, p.Ly),
                    spectra_eta=nothing,
+                   spectra_eta_factors=DEFAULT_SPECTRA_ETA_FACTORS,
                    spectra_delta_omega=nothing,
                    measure_twist::Bool=false,
                    twist_Ax::Float64=1e-3,
@@ -152,6 +153,7 @@ end
 - `use_twisted_spectra`: 是否用 TBC 谱函数替代默认谱函数；默认在 `spectra_Ltw > 1` 时开启
 - `m_point_patch_half_width`: TBC M 点 patch 半宽；仅在 `use_twisted_spectra=true` 时写入和使用
 - `spectra_eta`: TBC 谱函数展宽；默认 `p.η`
+- `spectra_eta_factors`: 谱学多展宽因子；必须以 `1` 开头，默认 `DEFAULT_SPECTRA_ETA_FACTORS`
 - `spectra_delta_omega`: TBC 谱函数频率步长；默认 `p.Δω`
 - `measure_twist`: 是否额外计算 twist benchmark；默认关闭，避免额外对角化
 - `twist_Ax`: twist 有限差分步长
@@ -168,6 +170,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                         use_twisted_spectra::Bool=spectra_Ltw > 1,
                         m_point_patch_half_width::Float64=π / max(p.Lx, p.Ly),
                         spectra_eta::Union{Nothing,Real}=nothing,
+                        spectra_eta_factors=DEFAULT_SPECTRA_ETA_FACTORS,
                         spectra_delta_omega::Union{Nothing,Real}=nothing,
                         measure_twist::Bool=false,
                         twist_Ax::Float64=1.0e-3,
@@ -192,6 +195,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                  p.Δω
     actual_spectra_eta > 0 || error("spectra_eta must be positive")
     actual_spectra_delta_omega > 0 || error("spectra_delta_omega must be positive")
+    actual_spectra_eta_factors = validate_spectra_eta_factors(spectra_eta_factors)
+    actual_eta_values = eta_values_from_base(actual_spectra_eta, actual_spectra_eta_factors)
 
     if !isdir(out_dir)
         mkpath(out_dir)
@@ -233,6 +238,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     tee_println("System: $(p.Lx)x$(p.Ly), β=$(p.β), V=$(p.V), W=$(p.W), n_imp=$(p.n_imp)")
     tee_println("Config: Therm=$n_therm, Sweep=$n_measure, TransFreq=$measure_transport_freq, BinSize=$bin_size")
     tee_println("Spectra: use_twisted_spectra=$use_twisted_spectra, Ltw=$actual_spectra_Ltw, effective=$(spectra_Lx_eff)x$(spectra_Ly_eff)")
+    tee_println("Spectra eta factors: $(actual_spectra_eta_factors)")
     if use_twisted_spectra
         tee_println("Spectra TBC: m_point_patch_half_width=$m_point_patch_half_width, spectra_eta=$actual_spectra_eta, spectra_delta_omega=$actual_spectra_delta_omega")
     end
@@ -267,6 +273,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
                 spectra_eta=actual_spectra_eta,
+                multi_eta_enabled=true,
+                spectra_eta_factors=actual_spectra_eta_factors,
+                eta_values=actual_eta_values,
+                spectra_eta_base=actual_spectra_eta,
                 spectra_delta_omega=actual_spectra_delta_omega,
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
@@ -290,6 +300,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
                 spectra_eta=actual_spectra_eta,
+                multi_eta_enabled=true,
+                spectra_eta_factors=actual_spectra_eta_factors,
+                eta_values=actual_eta_values,
+                spectra_eta_base=actual_spectra_eta,
                 spectra_delta_omega=actual_spectra_delta_omega,
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
@@ -381,6 +395,16 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_AMXpath = Matrix{Float64}(undef, 0, 0)
     accum_AXGpath = Matrix{Float64}(undef, 0, 0)
     accum_AXGnodePatch = nothing
+    accum_dc_eta = Vector{Float64}()
+    accum_opt_eta = Matrix{Float64}(undef, 0, 0)
+    accum_dos_eta = Matrix{Float64}(undef, 0, 0)
+    accum_dos_M_eta = Matrix{Float64}(undef, 0, 0)
+    accum_dos_M_patch_eta = nothing
+    accum_ldos0_eta = Matrix{Float64}(undef, 0, 0)
+    accum_Ak0_eta = Array{Float64, 3}(undef, 0, 0, 0)
+    accum_AMXpath_eta = Array{Float64, 3}(undef, 0, 0, 0)
+    accum_AXGpath_eta = Array{Float64, 3}(undef, 0, 0, 0)
+    accum_AXGnodePatch_eta = nothing
     
     for i in 1:n_measure
         # 1. HMC 演化
@@ -411,12 +435,15 @@ function run_simulation(p::ModelParameters, out_dir::String;
         if i % measure_transport_freq == 0
             # 计算输运和谱
             if use_twisted_spectra
-                transport_res = measure_transport_only(cache, p; reuse_buffers=true)
+                transport_res = measure_transport_only(cache, p;
+                                                       eta_values=actual_eta_values,
+                                                       reuse_buffers=true)
                 twisted_res = measure_twisted_spectra(cache, p, state;
                                                       Ltw=actual_spectra_Ltw,
                                                       m_point_patch_half_width=m_point_patch_half_width,
                                                       spectra_eta=actual_spectra_eta,
                                                       spectra_delta_omega=actual_spectra_delta_omega,
+                                                      eta_values=actual_eta_values,
                                                       reuse_buffers=false)
                 spec_res = SpectrumResult(transport_res.superfluid_stiffness,
                                           transport_res.dc_conductivity,
@@ -428,13 +455,27 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                           twisted_res.ldos_ω0,
                                           twisted_res.A_k_ω0,
                                           twisted_res.A_MX_path,
-                                          twisted_res.A_XG_path)
+                                          twisted_res.A_XG_path,
+                                          transport_res.dc_conductivity_eta,
+                                          transport_res.optical_conductivity_eta,
+                                          twisted_res.dos_eta,
+                                          twisted_res.dos_M_eta,
+                                          twisted_res.ldos_ω0_eta,
+                                          twisted_res.A_k_ω0_eta,
+                                          twisted_res.A_MX_path_eta,
+                                          twisted_res.A_XG_path_eta)
                 spec_dos_M_patch = twisted_res.dos_M_patch
                 spec_xg_node_patch = twisted_res.A_XG_node_patch
+                spec_dos_M_patch_eta = twisted_res.dos_M_patch_eta
+                spec_xg_node_patch_eta = twisted_res.A_XG_node_patch_eta
             else
-                spec_res = measure_transport_and_spectra(cache, p; reuse_buffers=true)
+                spec_res = measure_transport_and_spectra(cache, p;
+                                                         eta_values=actual_eta_values,
+                                                         reuse_buffers=true)
                 spec_dos_M_patch = nothing
                 spec_xg_node_patch = nothing
+                spec_dos_M_patch_eta = nothing
+                spec_xg_node_patch_eta = nothing
             end
             
             # A. 写入 Transport CSV (Scalars)
@@ -470,22 +511,48 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_AMXpath = copy(spec_res.A_MX_path)
                 accum_AXGpath = copy(spec_res.A_XG_path)
                 accum_AXGnodePatch = spec_xg_node_patch === nothing ? nothing : copy(spec_xg_node_patch)
+                accum_dc_eta = copy(spec_res.dc_conductivity_eta)
+                accum_opt_eta = copy(spec_res.optical_conductivity_eta)
+                accum_dos_eta = copy(spec_res.dos_eta)
+                accum_dos_M_eta = copy(spec_res.dos_M_eta)
+                accum_dos_M_patch_eta = spec_dos_M_patch_eta === nothing ? nothing : copy(spec_dos_M_patch_eta)
+                accum_ldos0_eta = copy(spec_res.ldos_ω0_eta)
+                accum_Ak0_eta = copy(spec_res.A_k_ω0_eta)
+                accum_AMXpath_eta = copy(spec_res.A_MX_path_eta)
+                accum_AXGpath_eta = copy(spec_res.A_XG_path_eta)
+                accum_AXGnodePatch_eta = spec_xg_node_patch_eta === nothing ? nothing : copy(spec_xg_node_patch_eta)
                 bin_count = 1
             else
                 accum_opt_cond .+= spec_res.optical_conductivity
                 accum_dos .+= spec_res.dos
                 accum_dos_M .+= spec_res.dos_M
+                accum_dc_eta .+= spec_res.dc_conductivity_eta
+                accum_opt_eta .+= spec_res.optical_conductivity_eta
+                accum_dos_eta .+= spec_res.dos_eta
+                accum_dos_M_eta .+= spec_res.dos_M_eta
                 accum_ldos0 .+= spec_res.ldos_ω0
+                accum_ldos0_eta .+= spec_res.ldos_ω0_eta
                 if spec_dos_M_patch !== nothing
                     accum_dos_M_patch === nothing && error("dos_M_patch accumulator missing for TBC spectra")
                     accum_dos_M_patch .+= spec_dos_M_patch
                 end
+                if spec_dos_M_patch_eta !== nothing
+                    accum_dos_M_patch_eta === nothing && error("dos_M_patch_eta accumulator missing for TBC spectra")
+                    accum_dos_M_patch_eta .+= spec_dos_M_patch_eta
+                end
                 accum_Ak0 .+= spec_res.A_k_ω0
                 accum_AMXpath .+= spec_res.A_MX_path
                 accum_AXGpath .+= spec_res.A_XG_path
+                accum_Ak0_eta .+= spec_res.A_k_ω0_eta
+                accum_AMXpath_eta .+= spec_res.A_MX_path_eta
+                accum_AXGpath_eta .+= spec_res.A_XG_path_eta
                 if spec_xg_node_patch !== nothing
                     accum_AXGnodePatch === nothing && error("A_XG_node_patch accumulator missing for TBC spectra")
                     accum_AXGnodePatch .+= spec_xg_node_patch
+                end
+                if spec_xg_node_patch_eta !== nothing
+                    accum_AXGnodePatch_eta === nothing && error("A_XG_node_patch_eta accumulator missing for TBC spectra")
+                    accum_AXGnodePatch_eta .+= spec_xg_node_patch_eta
                 end
                 bin_count += 1
             end
@@ -496,15 +563,29 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_opt_cond ./= bin_count
                 accum_dos ./= bin_count
                 accum_dos_M ./= bin_count
+                accum_dc_eta ./= bin_count
+                accum_opt_eta ./= bin_count
+                accum_dos_eta ./= bin_count
+                accum_dos_M_eta ./= bin_count
                 accum_ldos0 ./= bin_count
+                accum_ldos0_eta ./= bin_count
                 if accum_dos_M_patch !== nothing
                     accum_dos_M_patch ./= bin_count
+                end
+                if accum_dos_M_patch_eta !== nothing
+                    accum_dos_M_patch_eta ./= bin_count
                 end
                 accum_Ak0 ./= bin_count
                 accum_AMXpath ./= bin_count
                 accum_AXGpath ./= bin_count
+                accum_Ak0_eta ./= bin_count
+                accum_AMXpath_eta ./= bin_count
+                accum_AXGpath_eta ./= bin_count
                 if accum_AXGnodePatch !== nothing
                     accum_AXGnodePatch ./= bin_count
+                end
+                if accum_AXGnodePatch_eta !== nothing
+                    accum_AXGnodePatch_eta ./= bin_count
                 end
                 
                 # JLD2 追加写入
@@ -516,15 +597,29 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     g["opt_cond"] = accum_opt_cond
                     g["dos"] = accum_dos
                     g["dos_M"] = accum_dos_M
+                    g["dc_cond_eta"] = accum_dc_eta
+                    g["opt_cond_eta"] = accum_opt_eta
+                    g["dos_eta"] = accum_dos_eta
+                    g["dos_M_eta"] = accum_dos_M_eta
                     if accum_dos_M_patch !== nothing
                         g["dos_M_patch"] = accum_dos_M_patch
+                    end
+                    if accum_dos_M_patch_eta !== nothing
+                        g["dos_M_patch_eta"] = accum_dos_M_patch_eta
                     end
                     g["LDOS_0"] = accum_ldos0
                     g["A_k0"] = accum_Ak0
                     g["A_MX_path"] = accum_AMXpath
                     g["A_XG_path"] = accum_AXGpath
+                    g["LDOS_0_eta"] = accum_ldos0_eta
+                    g["A_k0_eta"] = accum_Ak0_eta
+                    g["A_MX_path_eta"] = accum_AMXpath_eta
+                    g["A_XG_path_eta"] = accum_AXGpath_eta
                     if accum_AXGnodePatch !== nothing
                         g["A_XG_node_patch"] = accum_AXGnodePatch
+                    end
+                    if accum_AXGnodePatch_eta !== nothing
+                        g["A_XG_node_patch_eta"] = accum_AXGnodePatch_eta
                     end
                     g["count"] = bin_count # 记录这个 bin 包含了多少个样本
                 end

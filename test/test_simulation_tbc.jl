@@ -51,6 +51,10 @@ end
                 @test file["spectra_Ltw"] == 1
                 @test file["spectra_Lx_eff"] == 4
                 @test file["spectra_Ly_eff"] == 4
+                @test file["multi_eta_enabled"] == true
+                @test file["spectra_eta_factors"] == DwaveHMC.DEFAULT_SPECTRA_ETA_FACTORS
+                @test file["eta_values"] == 0.25 .* DwaveHMC.DEFAULT_SPECTRA_ETA_FACTORS
+                @test file["spectra_eta_base"] == 0.25
 
                 @test haskey(file, "omega_grid")
                 @test haskey(file, "dos_omega_grid")
@@ -66,6 +70,17 @@ end
                 for key in ("opt_cond", "dos", "dos_M", "LDOS_0", "A_k0", "A_MX_path", "A_XG_path", "count")
                     @test haskey(g, key)
                 end
+                for key in ("dc_cond_eta", "opt_cond_eta", "dos_eta", "dos_M_eta",
+                            "LDOS_0_eta", "A_k0_eta", "A_MX_path_eta", "A_XG_path_eta")
+                    @test haskey(g, key)
+                end
+                @test length(g["dc_cond_eta"]) == 7
+                @test size(g["opt_cond_eta"], 1) == 7
+                @test size(g["dos_eta"], 1) == 7
+                @test size(g["A_MX_path_eta"], 1) == 7
+                @test g["opt_cond"] == vec(g["opt_cond_eta"][1, :])
+                @test g["dos"] == vec(g["dos_eta"][1, :])
+                @test g["A_MX_path"] == g["A_MX_path_eta"][1, :, :]
                 @test length(g["LDOS_0"]) == 16
                 @test size(g["A_k0"]) == (4, 4)
                 @test !haskey(g, "dos_M_patch")
@@ -113,6 +128,12 @@ end
                 @test haskey(g, "LDOS_0")
                 @test haskey(g, "dos_M_patch")
                 @test haskey(g, "A_XG_node_patch")
+                @test haskey(g, "dos_M_patch_eta")
+                @test haskey(g, "A_XG_node_patch_eta")
+                @test size(g["dos_M_patch_eta"], 1) == 7
+                @test size(g["A_XG_node_patch_eta"], 1) == 7
+                @test g["dos_M_patch"] == vec(g["dos_M_patch_eta"][1, :])
+                @test g["A_XG_node_patch"] == g["A_XG_node_patch_eta"][1, :, :]
                 @test !haskey(g, "dos_AN")
                 @test !haskey(g, "dos_AN_patch")
                 @test all(isfinite, g["dos_M_patch"])
@@ -143,6 +164,18 @@ end
             @test err isa ErrorException
             @test occursin("TBC spectra require even effective dimensions",
                            sprint(showerror, err))
+            @test !isfile(joinpath(out_dir, "spectra_bins.jld2"))
+        end
+    end
+
+    @testset "run_simulation rejects invalid spectra eta factors" begin
+        mktempdir() do out_dir
+            p = tiny_simulation_parameters()
+            @test_throws ErrorException run_simulation(p, out_dir;
+                                                       n_therm=0,
+                                                       n_measure=0,
+                                                       spectra_eta_factors=[2, 4, 8],
+                                                       verbose=false)
             @test !isfile(joinpath(out_dir, "spectra_bins.jld2"))
         end
     end
