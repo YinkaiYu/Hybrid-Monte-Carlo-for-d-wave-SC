@@ -23,7 +23,8 @@ function read_required_metadata(file)
     )
 end
 
-function collect_sweep_data(file)
+function collect_sweep_data(file; eta_factor=1)
+    eta_idx = selected_eta_index(file, eta_factor)
     list_opt = Vector{Vector{Float64}}()
     list_dos = Vector{Vector{Float64}}()
     list_dos_M = Vector{Vector{Float64}}()
@@ -36,18 +37,18 @@ function collect_sweep_data(file)
     for key in keys(file)
         if startswith(key, "sweep_")
             g = file[key]
-            push!(list_opt, g["opt_cond"])
-            push!(list_dos, g["dos"])
-            push!(list_dos_M, g["dos_M"])
-            if haskey(g, "dos_M_patch")
-                push!(list_dos_M_patch, g["dos_M_patch"])
+            push!(list_opt, selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx))
+            push!(list_dos, selected_vector(g, "dos_eta", "dos", eta_idx))
+            push!(list_dos_M, selected_vector(g, "dos_M_eta", "dos_M", eta_idx))
+            if haskey(g, "dos_M_patch") || haskey(g, "dos_M_patch_eta")
+                push!(list_dos_M_patch, selected_vector(g, "dos_M_patch_eta", "dos_M_patch", eta_idx))
             end
-            if haskey(g, "LDOS_0")
-                push!(list_ldos0, g["LDOS_0"])
+            if haskey(g, "LDOS_0") || haskey(g, "LDOS_0_eta")
+                push!(list_ldos0, selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx))
             end
-            push!(list_ak, g["A_k0"])
-            push!(list_mx_path, g["A_MX_path"])
-            push!(list_xg_path, g["A_XG_path"])
+            push!(list_ak, selected_matrix(g, "A_k0_eta", "A_k0", eta_idx))
+            push!(list_mx_path, selected_matrix(g, "A_MX_path_eta", "A_MX_path", eta_idx))
+            push!(list_xg_path, selected_matrix(g, "A_XG_path_eta", "A_XG_path", eta_idx))
         end
     end
 
@@ -62,7 +63,7 @@ function collect_sweep_data(file)
             count=length(list_dos))
 end
 
-function process_single_directory(target_dir)
+function process_single_directory(target_dir; eta_factor=1)
     jld_file = joinpath(target_dir, "spectra_bins.jld2")
 
     if !isfile(jld_file)
@@ -79,7 +80,7 @@ function process_single_directory(target_dir)
         meta = read_required_metadata(file)
         println("  Params: L=$(params.Lx)x$(params.Ly), Beta=$(params.β), spectra_Ltw=$(meta.spectra_Ltw), effective=$(meta.spectra_Lx_eff)x$(meta.spectra_Ly_eff)")
 
-        data = collect_sweep_data(file)
+        data = collect_sweep_data(file; eta_factor=eta_factor)
         if data.count == 0
             @warn "  No 'sweep_' data found in $jld_file."
             return
@@ -146,7 +147,7 @@ function process_single_directory(target_dir)
     end
 end
 
-function process_batch_spectra_root(root_dir::AbstractString=root_dir)
+function process_batch_spectra_root(root_dir::AbstractString=root_dir; eta_factor=1)
     if !isdir(root_dir)
         error("Root directory does not exist: $root_dir")
     end
@@ -169,7 +170,7 @@ function process_batch_spectra_root(root_dir::AbstractString=root_dir)
         for subdir in subdirs
             full_path = joinpath(root_dir, subdir)
             try
-                process_single_directory(full_path)
+                process_single_directory(full_path; eta_factor=eta_factor)
             catch e
                 @error "Error processing $subdir: $e"
             end
@@ -178,7 +179,8 @@ function process_batch_spectra_root(root_dir::AbstractString=root_dir)
 end
 
 function main()
-    process_batch_spectra_root(root_dir)
+    eta_factor = parse(Float64, get(ENV, "DWAVEHMC_SPECTRA_ETA_FACTOR", "1"))
+    process_batch_spectra_root(root_dir; eta_factor=eta_factor)
     println("\nAll tasks completed.")
 end
 

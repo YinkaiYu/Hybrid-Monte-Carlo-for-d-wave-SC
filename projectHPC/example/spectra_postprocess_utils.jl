@@ -27,6 +27,32 @@ function calc_stats(data_list)
     return mean_val, sem_val
 end
 
+function selected_eta_index(file, eta_factor)
+    factor = Float64(eta_factor)
+    if haskey(file, "spectra_eta_factors")
+        return DwaveHMC.eta_factor_index(collect(file["spectra_eta_factors"]), factor)
+    end
+    isapprox(factor, 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0) ||
+        error("Old spectra file has no multi-eta data; only eta_factor=1 is available")
+    return 1
+end
+
+function selected_vector(group, multi_key::AbstractString, old_key::AbstractString, eta_idx::Int)
+    if haskey(group, multi_key)
+        return vec(group[multi_key][eta_idx, :])
+    end
+    eta_idx == 1 || error("Missing $multi_key for selected eta factor")
+    return group[old_key]
+end
+
+function selected_matrix(group, multi_key::AbstractString, old_key::AbstractString, eta_idx::Int)
+    if haskey(group, multi_key)
+        return group[multi_key][eta_idx, :, :]
+    end
+    eta_idx == 1 || error("Missing $multi_key for selected eta factor")
+    return group[old_key]
+end
+
 function write_series_csv(path, header, grid, mean_values, err_values)
     open(path, "w") do io
         println(io, header)

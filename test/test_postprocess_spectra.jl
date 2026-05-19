@@ -55,7 +55,8 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                                  mx_ky=[0.0, 0.25, 0.5, 0.75, 1.0],
                                  xg_k=[0.0, 0.25, 0.5, 0.75, 1.0],
                                  use_twisted_spectra=true,
-                                 spectra_Ltw=2)
+                                 spectra_Ltw=2,
+                                 multi_eta=true)
     mkpath(dir)
     p = tiny_params()
     jldopen(joinpath(dir, "spectra_bins.jld2"), "w") do file
@@ -77,6 +78,12 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
         file["xg_path_ky"] = xg_k
         file["xg_path_kx_idx"] = collect(1:length(xg_k))
         file["xg_path_ky_idx"] = collect(1:length(xg_k))
+        if multi_eta
+            file["multi_eta_enabled"] = true
+            file["spectra_eta_factors"] = [1.0, 2.0, 4.0]
+            file["eta_values"] = [0.125, 0.25, 0.5]
+            file["spectra_eta_base"] = 0.125
+        end
 
         for sweep in 1:nsweeps
             prefix = "sweep_$sweep"
@@ -92,6 +99,37 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
             file["$prefix/A_XG_path"] = xg_path .+ offset .+ sweep
             if use_twisted_spectra
                 file["$prefix/A_XG_node_patch"] = xg_node_patch .+ offset .+ sweep
+            end
+            if multi_eta
+                stack_eta_vector(base) = vcat(reshape(base .* 1.0, 1, :),
+                                              reshape(base .* 2.0, 1, :),
+                                              reshape(base .* 4.0, 1, :))
+                stack_eta_matrix(base) = permutedims(cat(base, base .* 2.0, base .* 4.0; dims=3),
+                                                     (3, 1, 2))
+
+                opt_base = [1.0, 2.0] .+ offset .+ sweep
+                dos_base = [3.0, 4.0, 5.0] .+ offset .+ sweep
+                dos_M_base = [6.0, 7.0, 8.0] .+ offset .+ sweep
+                ldos_base = collect(1.0:4.0) .+ offset .+ sweep
+                ak_base = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
+                mx_base = mx_path .+ offset .+ sweep
+                xg_base = xg_path .+ offset .+ sweep
+                node_patch_base = xg_node_patch .+ offset .+ sweep
+
+                file["$prefix/dc_cond_eta"] = [100.0, 200.0, 400.0] .+ offset .+ sweep
+                file["$prefix/opt_cond_eta"] = stack_eta_vector(opt_base)
+                file["$prefix/dos_eta"] = stack_eta_vector(dos_base)
+                file["$prefix/dos_M_eta"] = stack_eta_vector(dos_M_base)
+                if use_twisted_spectra
+                    file["$prefix/dos_M_patch_eta"] = stack_eta_vector([10.0, 20.0, 30.0] .+ offset .+ sweep)
+                end
+                file["$prefix/LDOS_0_eta"] = stack_eta_vector(ldos_base)
+                file["$prefix/A_k0_eta"] = stack_eta_matrix(ak_base)
+                file["$prefix/A_MX_path_eta"] = stack_eta_matrix(mx_base)
+                file["$prefix/A_XG_path_eta"] = stack_eta_matrix(xg_base)
+                if use_twisted_spectra
+                    file["$prefix/A_XG_node_patch_eta"] = stack_eta_matrix(node_patch_base)
+                end
             end
         end
     end
@@ -164,6 +202,29 @@ end
     end
 end
 
+@testset "process_spectra.jl selects requested eta factor" begin
+    mktempdir() do root
+        target_dir = joinpath(root, PROCESS_TARGET_REL)
+        write_synthetic_spectra(target_dir; nsweeps=1)
+        Base.invokelatest(ProcessSpectraScript.process_spectra_directory,
+                          target_dir;
+                          eta_factor=4)
+
+        @test first_data_value(joinpath(target_dir, "processed_dos.csv"), 2) == 16.0
+        @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 32.0
+    end
+end
+
+@testset "process_spectra.jl rejects old data for non-default eta" begin
+    mktempdir() do root
+        target_dir = joinpath(root, PROCESS_TARGET_REL)
+        write_synthetic_spectra(target_dir; nsweeps=1, multi_eta=false)
+        @test_throws ErrorException Base.invokelatest(ProcessSpectraScript.process_spectra_directory,
+                                                      target_dir;
+                                                      eta_factor=4)
+    end
+end
+
 @testset "projectHPC batch processor M, antinode, and node outputs" begin
     mktempdir() do root
         t_dir = joinpath(root, "T_0.10")
@@ -185,6 +246,20 @@ end
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 9.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 13.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_node.csv"), 2) == 114.0
+    end
+end
+
+@testset "projectHPC batch processor selects requested eta factor" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001"); offset=0.0, nsweeps=1)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002"); offset=10.0, nsweeps=1)
+        Base.invokelatest(HPCProcessSpectraScript.process_T_directory,
+                          t_dir;
+                          eta_factor=4)
+
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 36.0
+        @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 52.0
     end
 end
 

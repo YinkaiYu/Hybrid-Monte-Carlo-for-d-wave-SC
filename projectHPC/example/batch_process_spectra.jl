@@ -44,7 +44,7 @@ function read_required_metadata(file)
     )
 end
 
-function process_single_config(jld_path)
+function process_single_config(jld_path; eta_factor=1)
     if !isfile(jld_path) || filesize(jld_path) == 0
         return nothing
     end
@@ -58,44 +58,46 @@ function process_single_config(jld_path)
 
             meta = read_required_metadata(file)
             g1 = file[sweep_keys[1]]
-            sum_opt = copy(g1["opt_cond"])
-            sum_dos = copy(g1["dos"])
-            sum_dos_M = copy(g1["dos_M"])
-            sum_ak = copy(g1["A_k0"])
-            sum_mx_path = copy(g1["A_MX_path"])
-            sum_xg_path = copy(g1["A_XG_path"])
-            has_ldos0 = haskey(g1, "LDOS_0")
-            sum_ldos0 = has_ldos0 ? copy(g1["LDOS_0"]) : nothing
-            has_node_patch = haskey(g1, "A_XG_node_patch")
+            eta_idx = selected_eta_index(file, eta_factor)
+            sum_opt = copy(selected_vector(g1, "opt_cond_eta", "opt_cond", eta_idx))
+            sum_dos = copy(selected_vector(g1, "dos_eta", "dos", eta_idx))
+            sum_dos_M = copy(selected_vector(g1, "dos_M_eta", "dos_M", eta_idx))
+            sum_ak = copy(selected_matrix(g1, "A_k0_eta", "A_k0", eta_idx))
+            sum_mx_path = copy(selected_matrix(g1, "A_MX_path_eta", "A_MX_path", eta_idx))
+            sum_xg_path = copy(selected_matrix(g1, "A_XG_path_eta", "A_XG_path", eta_idx))
+            has_ldos0 = haskey(g1, "LDOS_0") || haskey(g1, "LDOS_0_eta")
+            sum_ldos0 = has_ldos0 ? copy(selected_vector(g1, "LDOS_0_eta", "LDOS_0", eta_idx)) : nothing
+            has_node_patch = haskey(g1, "A_XG_node_patch") || haskey(g1, "A_XG_node_patch_eta")
             node_source_key = has_node_patch ? "A_XG_node_patch" : "A_XG_path"
-            sum_node_path = copy(g1[node_source_key])
-            has_patch = haskey(g1, "dos_M_patch")
-            sum_dos_M_patch = has_patch ? copy(g1["dos_M_patch"]) : nothing
+            node_multi_key = has_node_patch ? "A_XG_node_patch_eta" : "A_XG_path_eta"
+            sum_node_path = copy(selected_matrix(g1, node_multi_key, node_source_key, eta_idx))
+            has_patch = haskey(g1, "dos_M_patch") || haskey(g1, "dos_M_patch_eta")
+            sum_dos_M_patch = has_patch ? copy(selected_vector(g1, "dos_M_patch_eta", "dos_M_patch", eta_idx)) : nothing
             count = 1
 
             for i in 2:length(sweep_keys)
                 g = file[sweep_keys[i]]
-                if haskey(g, "dos_M_patch") != has_patch
+                if (haskey(g, "dos_M_patch") || haskey(g, "dos_M_patch_eta")) != has_patch
                     return nothing
                 end
-                if haskey(g, "A_XG_node_patch") != has_node_patch
+                if (haskey(g, "A_XG_node_patch") || haskey(g, "A_XG_node_patch_eta")) != has_node_patch
                     return nothing
                 end
-                if haskey(g, "LDOS_0") != has_ldos0
+                if (haskey(g, "LDOS_0") || haskey(g, "LDOS_0_eta")) != has_ldos0
                     return nothing
                 end
-                sum_opt .+= g["opt_cond"]
-                sum_dos .+= g["dos"]
-                sum_dos_M .+= g["dos_M"]
-                sum_ak .+= g["A_k0"]
-                sum_mx_path .+= g["A_MX_path"]
-                sum_xg_path .+= g["A_XG_path"]
+                sum_opt .+= selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx)
+                sum_dos .+= selected_vector(g, "dos_eta", "dos", eta_idx)
+                sum_dos_M .+= selected_vector(g, "dos_M_eta", "dos_M", eta_idx)
+                sum_ak .+= selected_matrix(g, "A_k0_eta", "A_k0", eta_idx)
+                sum_mx_path .+= selected_matrix(g, "A_MX_path_eta", "A_MX_path", eta_idx)
+                sum_xg_path .+= selected_matrix(g, "A_XG_path_eta", "A_XG_path", eta_idx)
                 if has_ldos0
-                    sum_ldos0 .+= g["LDOS_0"]
+                    sum_ldos0 .+= selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx)
                 end
-                sum_node_path .+= g[node_source_key]
+                sum_node_path .+= selected_matrix(g, node_multi_key, node_source_key, eta_idx)
                 if has_patch
-                    sum_dos_M_patch .+= g["dos_M_patch"]
+                    sum_dos_M_patch .+= selected_vector(g, "dos_M_patch_eta", "dos_M_patch", eta_idx)
                 end
                 count += 1
             end
@@ -123,7 +125,13 @@ function process_single_config(jld_path)
 
             return res
         end
-    catch
+    catch e
+        msg = sprint(showerror, e)
+        if occursin("eta_factor", msg) ||
+           occursin("multi-eta", msg) ||
+           occursin("selected eta factor", msg)
+            rethrow()
+        end
         return nothing
     end
 end
@@ -176,7 +184,7 @@ function compatibility_mismatches(reference, candidate)
     return mismatches
 end
 
-function process_T_directory(dir_path)
+function process_T_directory(dir_path; eta_factor=1)
     conf_dirs = glob("conf_*", dir_path)
     if isempty(conf_dirs)
         remove_spectra_outputs!(dir_path)
@@ -201,7 +209,7 @@ function process_T_directory(dir_path)
 
     for c_dir in conf_dirs
         jld_path = joinpath(c_dir, "spectra_bins.jld2")
-        res = process_single_config(jld_path)
+        res = process_single_config(jld_path; eta_factor=eta_factor)
         if res === nothing
             continue
         end
@@ -316,11 +324,12 @@ end
 
 function main()
     println("Starting Robust T-scan Spectra Processing...")
+    eta_factor = parse(Float64, get(ENV, "DWAVEHMC_SPECTRA_ETA_FACTOR", "1"))
     T_dirs = glob("T_*", target_dir)
     sort!(T_dirs, by = d -> try parse(Float64, split(basename(d), "_")[2]) catch; 0.0 end)
 
     for t_dir in T_dirs
-        process_T_directory(t_dir)
+        process_T_directory(t_dir; eta_factor=eta_factor)
     end
 
     println("Done.")
