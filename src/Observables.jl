@@ -597,6 +597,7 @@ struct SpectrumResult
     dos_ω_grid::Vector{Float64}             # DOS 用的完整网格
     dos::Vector{Float64}                    # N(ω)
     dos_M::Vector{Float64}                   # M 点 (π,0)/(0,π) 的 DOS
+    ldos_ω0::Vector{Float64}                 # 局部态密度 N_i(ω=0)
     
     # 动量解析的谱权重 (可选，数据量巨大，通常只存特定路径或求和)
     # 我们这里存: A(k, ω=0) (Fermi Surface) 和 DOS.
@@ -616,6 +617,7 @@ struct SpectraOnlyResult
     dos_ω_grid::Vector{Float64}
     dos::Vector{Float64}
     dos_M::Vector{Float64}
+    ldos_ω0::Vector{Float64}
     A_k_ω0::Matrix{Float64}
     A_MX_path::Matrix{Float64}
     A_XG_path::Matrix{Float64}
@@ -776,6 +778,7 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     dos_ω_grid = cache.dos_omega_grid
     dos_vals = cache.dos_vals
     dos_M_vals = cache.dos_M_vals
+    ldos_ω0 = cache.ldos_ω0
     ak_map = cache.ak_map
     ak_mx_path = cache.ak_mx_path
     ak_xg_path = cache.ak_xg_path
@@ -798,6 +801,7 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     # 我们这里使用对称的区间
     fill!(dos_vals, 0.0)
     fill!(dos_M_vals, 0.0)
+    fill!(ldos_ω0, 0.0)
     fill!(ak_map, 0.0)
 
     # A(k,ω) along M(π,0) -> X(π,π) and Γ(0,0) -> X(π,π)
@@ -884,6 +888,10 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
         # 7. Spectral Function A(k,0) (Fermi Surface intensity)
         # Check if En is close to 0 (within η)
         weight_at_zero = lorentzian(-En, p.η)
+
+        @inbounds @simd for i in 1:N
+            ldos_ω0[i] += abs2(U[i, n]) * weight_at_zero
+        end
         
         if weight_at_zero > 1e-6
             # Add to map: |u_k|^2 * delta(E)
@@ -899,11 +907,13 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters; reus
     # 1/sqrt(N) factor in definition means |FFT|^2 / N.
 
     if reuse_buffers
-        return SpectraOnlyResult(dos_ω_grid, dos_vals, dos_M_vals, ak_map, ak_mx_path, ak_xg_path)
+        return SpectraOnlyResult(dos_ω_grid, dos_vals, dos_M_vals, ldos_ω0,
+                                 ak_map, ak_mx_path, ak_xg_path)
     end
 
     return SpectraOnlyResult(copy(dos_ω_grid), copy(dos_vals), copy(dos_M_vals),
-                             copy(ak_map), copy(ak_mx_path), copy(ak_xg_path))
+                             copy(ldos_ω0), copy(ak_map), copy(ak_mx_path),
+                             copy(ak_xg_path))
 end
 
 function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; reuse_buffers::Bool=false)
@@ -917,6 +927,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters; 
                           spectra.dos_ω_grid,
                           spectra.dos,
                           spectra.dos_M,
+                          spectra.ldos_ω0,
                           spectra.A_k_ω0,
                           spectra.A_MX_path,
                           spectra.A_XG_path)

@@ -272,6 +272,9 @@ end
     @test combined.dos_ω_grid == spectra.dos_ω_grid
     @test combined.dos ≈ spectra.dos
     @test combined.dos_M ≈ spectra.dos_M
+    @test combined.ldos_ω0 ≈ spectra.ldos_ω0
+    @test length(combined.ldos_ω0) == p.N
+    @test all(isfinite, combined.ldos_ω0)
     @test combined.A_k_ω0 ≈ spectra.A_k_ω0
     @test combined.A_MX_path ≈ spectra.A_MX_path
     @test combined.A_XG_path ≈ spectra.A_XG_path
@@ -297,8 +300,10 @@ end
     @test size(tw1.A_k_ω0) == size(base.A_k_ω0)
     @test size(tw1.A_MX_path) == size(base.A_MX_path)
     @test size(tw1.A_XG_path) == size(base.A_XG_path)
+    @test length(tw1.ldos_ω0) == p.N
     @test isapprox(tw1.dos, base.dos; atol=1e-8, rtol=1e-8)
     @test isapprox(tw1.dos_M, base.dos_M; atol=1e-8, rtol=1e-8)
+    @test isapprox(tw1.ldos_ω0, base.ldos_ω0; atol=1e-8, rtol=1e-8)
     @test isapprox(tw1.A_k_ω0, base.A_k_ω0; atol=1e-8, rtol=1e-8)
     @test isapprox(tw1.A_MX_path, base.A_MX_path; atol=1e-8, rtol=1e-8)
     @test isapprox(tw1.A_XG_path, base.A_XG_path; atol=1e-8, rtol=1e-8)
@@ -316,6 +321,7 @@ end
     @test all(isfinite, tw2.dos)
     @test all(isfinite, tw2.dos_M)
     @test all(isfinite, tw2.dos_M_patch)
+    @test all(isfinite, tw2.ldos_ω0)
     @test all(isfinite, tw2.A_k_ω0)
     @test all(isfinite, tw2.A_MX_path)
     @test all(isfinite, tw2.A_XG_path)

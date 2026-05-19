@@ -6,6 +6,7 @@ struct TwistedSpectraResult
     dos::Vector{Float64}
     dos_M::Vector{Float64}
     dos_M_patch::Vector{Float64}
+    ldos_ω0::Vector{Float64}
     A_k_ω0::Matrix{Float64}
     A_MX_path::Matrix{Float64}
     A_XG_path::Matrix{Float64}
@@ -235,6 +236,7 @@ function measure_twisted_spectra(cache::ComputeCache,
     dos_vals = zeros(Float64, nω)
     dos_M_vals = zeros(Float64, nω)
     dos_M_patch_vals = zeros(Float64, nω)
+    ldos_ω0 = zeros(Float64, N)
     A_k0 = zeros(Float64, Lx_eff, Ly_eff)
     _, mx_path_kx, mx_path_ky = tbc_mx_path_metadata(Lx, Ly, Ltw)
     xg_path_kx, xg_path_ky = tbc_xg_path_metadata(Lx, Ly, Ltw)
@@ -344,6 +346,9 @@ function measure_twisted_spectra(cache::ComputeCache,
 
             patch_weight = 0.0
             weight_at_zero = lorentzian_spectra(-En, spectra_eta)
+            @inbounds @simd for i in 1:N
+                ldos_ω0[i] += abs2(vecs[i, n]) * weight_at_zero
+            end
             for my in 0:Ly-1, mx in 0:Lx-1
                 Ix = twist_fft_to_effective_index(mx, nx, Lx, Ltw)
                 Iy = twist_fft_to_effective_index(my, ny, Ly, Ltw)
@@ -394,6 +399,7 @@ function measure_twisted_spectra(cache::ComputeCache,
     end
 
     dos_vals ./= (N * Ltw^2)
+    ldos_ω0 ./= Ltw^2
     A_k0 ./= N
 
     return TwistedSpectraResult(
@@ -401,6 +407,7 @@ function measure_twisted_spectra(cache::ComputeCache,
         reuse_buffers ? dos_vals : copy(dos_vals),
         reuse_buffers ? dos_M_vals : copy(dos_M_vals),
         reuse_buffers ? dos_M_patch_vals : copy(dos_M_patch_vals),
+        reuse_buffers ? ldos_ω0 : copy(ldos_ω0),
         reuse_buffers ? A_k0 : copy(A_k0),
         reuse_buffers ? A_MX_path : copy(A_MX_path),
         reuse_buffers ? A_XG_path : copy(A_XG_path),

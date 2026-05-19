@@ -11,5 +11,7 @@ plots/figures/*
 
 .vscode/
 .DS_Store
+.playwright-cli/
+output/playwright/
 
 projectHPC/example/T_*

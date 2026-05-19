@@ -374,6 +374,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_dos = Vector{Float64}()
     accum_dos_M = Vector{Float64}()
     accum_dos_M_patch = nothing
+    accum_ldos0 = Vector{Float64}()
     accum_Ak0 = Matrix{Float64}(undef, 0, 0)
     accum_AMXpath = Matrix{Float64}(undef, 0, 0)
     accum_AXGpath = Matrix{Float64}(undef, 0, 0)
@@ -422,6 +423,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                           twisted_res.dos_ω_grid,
                                           twisted_res.dos,
                                           twisted_res.dos_M,
+                                          twisted_res.ldos_ω0,
                                           twisted_res.A_k_ω0,
                                           twisted_res.A_MX_path,
                                           twisted_res.A_XG_path)
@@ -461,6 +463,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_dos = copy(spec_res.dos)
                 accum_dos_M = copy(spec_res.dos_M)
                 accum_dos_M_patch = spec_dos_M_patch === nothing ? nothing : copy(spec_dos_M_patch)
+                accum_ldos0 = copy(spec_res.ldos_ω0)
                 accum_Ak0 = copy(spec_res.A_k_ω0)
                 accum_AMXpath = copy(spec_res.A_MX_path)
                 accum_AXGpath = copy(spec_res.A_XG_path)
@@ -470,6 +473,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_opt_cond .+= spec_res.optical_conductivity
                 accum_dos .+= spec_res.dos
                 accum_dos_M .+= spec_res.dos_M
+                accum_ldos0 .+= spec_res.ldos_ω0
                 if spec_dos_M_patch !== nothing
                     accum_dos_M_patch === nothing && error("dos_M_patch accumulator missing for TBC spectra")
                     accum_dos_M_patch .+= spec_dos_M_patch
@@ -490,6 +494,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_opt_cond ./= bin_count
                 accum_dos ./= bin_count
                 accum_dos_M ./= bin_count
+                accum_ldos0 ./= bin_count
                 if accum_dos_M_patch !== nothing
                     accum_dos_M_patch ./= bin_count
                 end
@@ -512,6 +517,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     if accum_dos_M_patch !== nothing
                         g["dos_M_patch"] = accum_dos_M_patch
                     end
+                    g["LDOS_0"] = accum_ldos0
                     g["A_k0"] = accum_Ak0
                     g["A_MX_path"] = accum_AMXpath
                     g["A_XG_path"] = accum_AXGpath

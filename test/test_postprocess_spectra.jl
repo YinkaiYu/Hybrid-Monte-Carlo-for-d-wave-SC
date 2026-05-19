@@ -81,6 +81,7 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
             file["$prefix/dos"] = [3.0, 4.0, 5.0] .+ offset .+ sweep
             file["$prefix/dos_M"] = [6.0, 7.0, 8.0] .+ offset .+ sweep
             file["$prefix/dos_M_patch"] = [10.0, 20.0, 30.0] .+ offset .+ sweep
+            file["$prefix/LDOS_0"] = collect(1.0:4.0) .+ offset .+ sweep
             file["$prefix/A_k0"] = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
             file["$prefix/A_MX_path"] = mx_path .+ offset .+ sweep
             file["$prefix/A_XG_path"] = xg_path .+ offset .+ sweep
@@ -109,11 +110,13 @@ end
         @test csv_data_rows(joinpath(target_dir, "processed_ak0.csv")) == 16
         @test isfile(joinpath(target_dir, "processed_dos_M.csv"))
         @test isfile(joinpath(target_dir, "processed_dos_M_patch.csv"))
+        @test isfile(joinpath(target_dir, "processed_ldos0.csv"))
         @test isfile(joinpath(target_dir, "processed_dos_AN.csv"))
         @test isfile(joinpath(target_dir, "processed_dos_node.csv"))
         @test isfile(joinpath(target_dir, "processed_MX_path.csv"))
         @test isfile(joinpath(target_dir, "processed_XG_path.csv"))
         @test header(joinpath(target_dir, "processed_dos_M.csv")) == "omega,DOS_M,Error"
+        @test csv_data_rows(joinpath(target_dir, "processed_ldos0.csv")) == 4
         @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 8.0
         @test first_data_value(joinpath(target_dir, "processed_dos_node.csv"), 2) == 6.0
     end
@@ -128,6 +131,7 @@ end
 
         @test csv_data_rows(joinpath(target_dir, "processed_ak0.csv")) == 16
         @test isfile(joinpath(target_dir, "processed_dos_M_patch.csv"))
+        @test isfile(joinpath(target_dir, "processed_ldos0.csv"))
         @test isfile(joinpath(target_dir, "processed_dos_AN.csv"))
         @test isfile(joinpath(target_dir, "processed_dos_node.csv"))
         @test first_data_value(joinpath(target_dir, "processed_dos.csv"), 1) == -2.0
@@ -144,10 +148,12 @@ end
 
         @test csv_data_rows(joinpath(t_dir, "spectra_ak0.csv")) == 16
         @test isfile(joinpath(t_dir, "spectra_dos_M_patch.csv"))
+        @test isfile(joinpath(t_dir, "spectra_ldos0.csv"))
         @test isfile(joinpath(t_dir, "spectra_dos_AN.csv"))
         @test isfile(joinpath(t_dir, "spectra_dos_node.csv"))
         @test isfile(joinpath(t_dir, "spectra_MX_path.csv"))
         @test isfile(joinpath(t_dir, "spectra_XG_path.csv"))
+        @test csv_data_rows(joinpath(t_dir, "spectra_ldos0.csv")) == 4
         @test isfile(joinpath(t_dir, "spectra_path_peaks.csv"))
         @test header(joinpath(t_dir, "spectra_dos.csv")) == "omega,DOS,DOS_Error,DOS_M,DOS_M_Error"
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 1) == -2.0

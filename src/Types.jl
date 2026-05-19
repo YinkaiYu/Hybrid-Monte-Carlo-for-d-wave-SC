@@ -283,6 +283,7 @@ mutable struct ComputeCache
     dos_omega_grid::Vector{Float64}
     dos_vals::Vector{Float64}
     dos_M_vals::Vector{Float64}
+    ldos_ω0::Vector{Float64}
     ak_map::Matrix{Float64}
     ak_mx_path::Matrix{Float64}
     ak_xg_path::Matrix{Float64}
@@ -346,6 +347,7 @@ function initialize_cache(p::ModelParameters)
     dos_omega_grid = collect(-p.ω_max:p.Δω:p.ω_max)
     dos_vals = zeros(Float64, length(dos_omega_grid))
     dos_M_vals = zeros(Float64, length(dos_omega_grid))
+    ldos_ω0 = zeros(Float64, p.N)
     ak_map = zeros(Float64, p.Lx, p.Ly)
     mx_path_len = fld(p.Ly, 2) + 1
     xg_path_len = fld(min(p.Lx, p.Ly), 2) + 1
@@ -363,6 +365,6 @@ function initialize_cache(p::ModelParameters)
                         x_idx, y_idx, parity_x, parity_y,
                         u_pi_cache, u_pi_k_cache, fft_plan_y,
                         omega_grid, sigma_omega, dos_omega_grid,
-                        dos_vals, dos_M_vals, ak_map, ak_mx_path, ak_xg_path,
+                        dos_vals, dos_M_vals, ldos_ω0, ak_map, ak_mx_path, ak_xg_path,
                         lor_cache, mx_path_weights, xg_path_weights, omega_inv)
 end
