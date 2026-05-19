@@ -21,6 +21,12 @@ function run_tiny_spectra_simulation(p::ModelParameters, out_dir::String; kwargs
     return joinpath(out_dir, "spectra_bins.jld2")
 end
 
+function read_transport_dc(path::AbstractString)
+    lines = readlines(joinpath(path, "transport.csv"))
+    fields = split(lines[2], ",")
+    return parse(Float64, fields[3])
+end
+
 @testset "spectra eta factor validation" begin
     @test DwaveHMC.validate_spectra_eta_factors([1, 2, 4]) == [1.0, 2.0, 4.0]
     @test DwaveHMC.validate_spectra_eta_factors((1, 2, 4, 8)) == [1.0, 2.0, 4.0, 8.0]
@@ -149,6 +155,32 @@ end
                 @test length(g["LDOS_0"]) == 16
                 @test length(g["dos_M_patch"]) == length(g["dos"])
                 @test length(g["dos"]) == length(file["dos_omega_grid"])
+            end
+        end
+    end
+
+    @testset "TBC spectra_eta does not change transport eta" begin
+        mktempdir() do root
+            p = tiny_simulation_parameters()
+            out_default = joinpath(root, "default_spectra_eta")
+            out_wide = joinpath(root, "wide_spectra_eta")
+
+            run_tiny_spectra_simulation(p, out_default;
+                                        use_twisted_spectra=true,
+                                        spectra_Ltw=2,
+                                        spectra_eta=p.η,
+                                        spectra_eta_factors=[1.0, 2.0])
+            wide_path = run_tiny_spectra_simulation(p, out_wide;
+                                                    use_twisted_spectra=true,
+                                                    spectra_Ltw=2,
+                                                    spectra_eta=2p.η,
+                                                    spectra_eta_factors=[1.0, 2.0])
+
+            @test read_transport_dc(out_wide) == read_transport_dc(out_default)
+            jldopen(wide_path, "r") do file
+                @test file["eta_values"] == (2p.η) .* [1.0, 2.0]
+                @test file["transport_eta_values"] == p.η .* [1.0, 2.0]
+                @test file["transport_eta_base"] == p.η
             end
         end
     end

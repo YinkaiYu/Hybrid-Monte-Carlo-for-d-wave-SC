@@ -196,7 +196,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
     actual_spectra_eta > 0 || error("spectra_eta must be positive")
     actual_spectra_delta_omega > 0 || error("spectra_delta_omega must be positive")
     actual_spectra_eta_factors = validate_spectra_eta_factors(spectra_eta_factors)
-    actual_eta_values = eta_values_from_base(actual_spectra_eta, actual_spectra_eta_factors)
+    actual_spectra_eta_values = eta_values_from_base(actual_spectra_eta, actual_spectra_eta_factors)
+    actual_transport_eta_values = eta_values_from_base(p.η, actual_spectra_eta_factors)
 
     if !isdir(out_dir)
         mkpath(out_dir)
@@ -275,8 +276,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spectra_eta=actual_spectra_eta,
                 multi_eta_enabled=true,
                 spectra_eta_factors=actual_spectra_eta_factors,
-                eta_values=actual_eta_values,
+                eta_values=actual_spectra_eta_values,
                 spectra_eta_base=actual_spectra_eta,
+                transport_eta_values=actual_transport_eta_values,
+                transport_eta_base=p.η,
                 spectra_delta_omega=actual_spectra_delta_omega,
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
@@ -302,8 +305,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spectra_eta=actual_spectra_eta,
                 multi_eta_enabled=true,
                 spectra_eta_factors=actual_spectra_eta_factors,
-                eta_values=actual_eta_values,
+                eta_values=actual_spectra_eta_values,
                 spectra_eta_base=actual_spectra_eta,
+                transport_eta_values=actual_transport_eta_values,
+                transport_eta_base=p.η,
                 spectra_delta_omega=actual_spectra_delta_omega,
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
@@ -436,14 +441,14 @@ function run_simulation(p::ModelParameters, out_dir::String;
             # 计算输运和谱
             if use_twisted_spectra
                 transport_res = measure_transport_only(cache, p;
-                                                       eta_values=actual_eta_values,
+                                                       eta_values=actual_transport_eta_values,
                                                        reuse_buffers=true)
                 twisted_res = measure_twisted_spectra(cache, p, state;
                                                       Ltw=actual_spectra_Ltw,
                                                       m_point_patch_half_width=m_point_patch_half_width,
                                                       spectra_eta=actual_spectra_eta,
                                                       spectra_delta_omega=actual_spectra_delta_omega,
-                                                      eta_values=actual_eta_values,
+                                                      eta_values=actual_spectra_eta_values,
                                                       reuse_buffers=false)
                 spec_res = SpectrumResult(transport_res.superfluid_stiffness,
                                           transport_res.dc_conductivity,
@@ -470,7 +475,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spec_xg_node_patch_eta = twisted_res.A_XG_node_patch_eta
             else
                 spec_res = measure_transport_and_spectra(cache, p;
-                                                         eta_values=actual_eta_values,
+                                                         eta_values=actual_spectra_eta_values,
                                                          reuse_buffers=true)
                 spec_dos_M_patch = nothing
                 spec_xg_node_patch = nothing

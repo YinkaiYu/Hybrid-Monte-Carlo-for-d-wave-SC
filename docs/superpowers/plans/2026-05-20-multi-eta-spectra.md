@@ -4,7 +4,7 @@
 
 **Goal:** Store exact multi-`η` spectra/DC results in JLD2 for `η, 2η, 4η, 8η, 16η, 32η, 64η`, while default CSV workflows keep using `eta_factor = 1`.
 
-**Architecture:** Add a small `MultiEta.jl` helper module area for validation and factor selection, then thread validated `eta_values` through transport, untwisted spectra, TBC spectra, simulation binning, and post-processing. Existing single-`η` fields remain first-slice compatibility fields; multi-`η` arrays use `η` as dimension 1.
+**Architecture:** Add a small `MultiEta.jl` helper module area for validation and factor selection, then thread validated `eta_values` through transport, untwisted spectra, TBC spectra, simulation binning, and post-processing. TBC spectra use `spectra_eta` as their base broadening, while scalar transport/DC keeps `p.η` as its base broadening. Existing single-`η` fields remain first-slice compatibility fields; multi-`η` arrays use `η` as dimension 1.
 
 **Tech Stack:** Julia, DwaveHMC structs/functions, JLD2, existing script-based post-processing, `Test`.
 

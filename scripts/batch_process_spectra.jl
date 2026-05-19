@@ -25,6 +25,7 @@ end
 
 function collect_sweep_data(file; eta_factor=1)
     eta_idx = selected_eta_index(file, eta_factor)
+    list_dc = Float64[]
     list_opt = Vector{Vector{Float64}}()
     list_dos = Vector{Vector{Float64}}()
     list_dos_M = Vector{Vector{Float64}}()
@@ -37,6 +38,9 @@ function collect_sweep_data(file; eta_factor=1)
     for key in keys(file)
         if startswith(key, "sweep_")
             g = file[key]
+            if haskey(g, "dc_cond_eta") || haskey(g, "dc_cond")
+                push!(list_dc, selected_scalar(g, "dc_cond_eta", "dc_cond", eta_idx))
+            end
             push!(list_opt, selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx))
             push!(list_dos, selected_vector(g, "dos_eta", "dos", eta_idx))
             push!(list_dos_M, selected_vector(g, "dos_M_eta", "dos_M", eta_idx))
@@ -52,7 +56,8 @@ function collect_sweep_data(file; eta_factor=1)
         end
     end
 
-    return (opt=list_opt,
+    return (dc=list_dc,
+            opt=list_opt,
             dos=list_dos,
             dos_M=list_dos_M,
             dos_M_patch=list_dos_M_patch,
@@ -94,6 +99,14 @@ function process_single_directory(target_dir; eta_factor=1)
         mean_ak, err_ak = calc_stats(data.ak)
         mean_mx_path, err_mx_path = calc_stats(data.mx_path)
         mean_xg_path, err_xg_path = calc_stats(data.xg_path)
+
+        if !isempty(data.dc) && !isapprox(Float64(eta_factor), 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0)
+            mean_dc, err_dc = calc_scalar_stats(data.dc)
+            write_selected_dc_csv(joinpath(target_dir, "processed_dc_cond.csv"),
+                                  eta_factor, mean_dc, err_dc)
+        else
+            rm(joinpath(target_dir, "processed_dc_cond.csv"); force=true)
+        end
 
         write_series_csv(joinpath(target_dir, "processed_opt_cond.csv"),
                          "omega,Re_Sigma,Error", meta.omega_grid, mean_opt, err_opt)

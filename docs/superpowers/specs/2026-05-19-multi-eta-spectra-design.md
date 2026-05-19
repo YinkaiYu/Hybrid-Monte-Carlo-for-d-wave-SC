@@ -47,14 +47,18 @@ The actual broadening values are
 
 ```julia
 eta_values = actual_spectra_eta .* spectra_eta_factors
+transport_eta_values = p.η .* spectra_eta_factors
 ```
 
 where `actual_spectra_eta` is the existing single-`η` value after the current
-TBC/non-TBC selection logic. The factors must be non-empty, finite, positive,
-unique under approximate comparison, and the first factor must be `1`. Lists
-such as `[2, 4, 8]` and `[2, 1, 4]` are rejected instead of reordered. This
-keeps the first slice, default `eta_factor = 1`, old fields, and default CSV
-output aligned.
+TBC/non-TBC selection logic. In TBC mode this can differ from transport:
+spectra arrays use `eta_values`, while scalar DC conductivity uses
+`transport_eta_values` so `spectra_eta` does not change the old transport
+broadening. The factors must be non-empty, finite, positive, unique under
+approximate comparison, and the first factor must be `1`. Lists such as
+`[2, 4, 8]` and `[2, 1, 4]` are rejected instead of reordered. This keeps the
+first slice, default `eta_factor = 1`, old fields, and default CSV output
+aligned.
 
 Post-processing functions gain an optional selection keyword, defaulting to the
 old behavior:
@@ -115,12 +119,15 @@ Top-level metadata added to `spectra_bins.jld2`:
 ```text
 multi_eta_enabled      :: Bool
 spectra_eta_factors    :: Vector{Float64}
-eta_values             :: Vector{Float64}
+eta_values             :: Vector{Float64}    # spectra broadening values
 spectra_eta_base       :: Float64
+transport_eta_values   :: Vector{Float64}    # DC transport broadening values
+transport_eta_base     :: Float64
 ```
 
 The first metadata entry is always `spectra_eta_factors[1] == 1`, so
-`eta_values[1] == spectra_eta_base`.
+`eta_values[1] == spectra_eta_base` and
+`transport_eta_values[1] == transport_eta_base`.
 
 Each `sweep_*` group adds fields with `η` as the first dimension:
 

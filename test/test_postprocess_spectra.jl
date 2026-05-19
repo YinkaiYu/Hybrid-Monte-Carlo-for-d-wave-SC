@@ -217,6 +217,8 @@ end
                           target_dir;
                           eta_factor=4)
 
+        @test header(joinpath(target_dir, "processed_dc_cond.csv")) == "eta_factor,DC_Conductivity,Error"
+        @test first_data_value(joinpath(target_dir, "processed_dc_cond.csv"), 2) == 401.0
         @test first_data_value(joinpath(target_dir, "processed_dos.csv"), 2) == 16.0
         @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 32.0
     end
@@ -279,8 +281,26 @@ end
                           t_dir;
                           eta_factor=4)
 
+        @test header(joinpath(t_dir, "spectra_dc_cond.csv")) == "eta_factor,DC_Conductivity,Error"
+        @test first_data_value(joinpath(t_dir, "spectra_dc_cond.csv"), 2) == 406.0
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 36.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 52.0
+    end
+end
+
+@testset "projectHPC batch processor warns and skips malformed multi-eta dimensions" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001"); offset=0.0, nsweeps=1)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002"); offset=10.0, nsweeps=1)
+        jldopen(joinpath(t_dir, "conf_002", "spectra_bins.jld2"), "a+") do file
+            replace_jld2_dataset!(file, "sweep_1/dos_eta", ones(Float64, 3, 2))
+        end
+
+        @test_logs (:warn, r"Skipping spectra config") Base.invokelatest(HPCProcessSpectraScript.process_T_directory,
+                                                                          t_dir;
+                                                                          eta_factor=4)
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 16.0
     end
 end
 

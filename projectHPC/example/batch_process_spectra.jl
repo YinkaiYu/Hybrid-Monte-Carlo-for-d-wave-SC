@@ -7,6 +7,7 @@ include(joinpath(@__DIR__, "spectra_postprocess_utils.jl"))
 target_dir = get(ENV, "DWAVEHMC_ANALYSIS_DIR", @__DIR__)
 
 const SPECTRA_OUTPUT_FILES = [
+    "spectra_dc_cond.csv",
     "spectra_opt_cond.csv",
     "spectra_dos.csv",
     "spectra_dos_M.csv",
@@ -48,7 +49,10 @@ function is_eta_selection_error(e)
     msg = sprint(showerror, e)
     return occursin("eta_factor", msg) ||
            occursin("multi-eta", msg) ||
-           occursin("selected eta factor", msg)
+           occursin("selected eta factor", msg) ||
+           occursin("eta-first array", msg) ||
+           occursin("eta dimension", msg) ||
+           occursin("compatible with", msg)
 end
 
 function selected_eta_value(file, eta_idx::Int, eta_factor)
@@ -62,6 +66,19 @@ function selected_eta_value(file, eta_idx::Int, eta_factor)
     if haskey(file, "spectra_eta")
         return Float64(file["spectra_eta"])
     end
+    return Float64(file["params"].η)
+end
+
+function selected_transport_eta_value(file, eta_idx::Int, eta_factor)
+    if haskey(file, "transport_eta_values")
+        return Float64(file["transport_eta_values"][eta_idx])
+    elseif haskey(file, "eta_values")
+        return Float64(file["eta_values"][eta_idx])
+    end
+
+    isapprox(Float64(eta_factor), 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0) ||
+        error("Missing transport eta metadata for eta_factor=$eta_factor")
+
     return Float64(file["params"].η)
 end
 
@@ -81,6 +98,9 @@ function process_single_config(jld_path; eta_factor=1)
             g1 = file[sweep_keys[1]]
             eta_idx = selected_eta_index(file, eta_factor)
             selected_eta = selected_eta_value(file, eta_idx, eta_factor)
+            selected_transport_eta = selected_transport_eta_value(file, eta_idx, eta_factor)
+            has_dc = haskey(g1, "dc_cond_eta") || haskey(g1, "dc_cond")
+            sum_dc = has_dc ? selected_scalar(g1, "dc_cond_eta", "dc_cond", eta_idx) : 0.0
             sum_opt = copy(selected_vector(g1, "opt_cond_eta", "opt_cond", eta_idx))
             sum_dos = copy(selected_vector(g1, "dos_eta", "dos", eta_idx))
             sum_dos_M = copy(selected_vector(g1, "dos_M_eta", "dos_M", eta_idx))
@@ -108,6 +128,12 @@ function process_single_config(jld_path; eta_factor=1)
                 if (haskey(g, "LDOS_0") || haskey(g, "LDOS_0_eta")) != has_ldos0
                     return nothing
                 end
+                if (haskey(g, "dc_cond_eta") || haskey(g, "dc_cond")) != has_dc
+                    return nothing
+                end
+                if has_dc
+                    sum_dc += selected_scalar(g, "dc_cond_eta", "dc_cond", eta_idx)
+                end
                 sum_opt .+= selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx)
                 sum_dos .+= selected_vector(g, "dos_eta", "dos", eta_idx)
                 sum_dos_M .+= selected_vector(g, "dos_M_eta", "dos_M", eta_idx)
@@ -125,6 +151,7 @@ function process_single_config(jld_path; eta_factor=1)
             end
 
             res = (opt=sum_opt ./ count,
+                   dc=has_dc ? (sum_dc / count) : nothing,
                    dos=sum_dos ./ count,
                    dos_M=sum_dos_M ./ count,
                    dos_M_patch=has_patch ? (sum_dos_M_patch ./ count) : nothing,
@@ -135,6 +162,7 @@ function process_single_config(jld_path; eta_factor=1)
                    node_path=sum_node_path ./ count,
                    node_from_patch=has_node_patch,
                    selected_eta=selected_eta,
+                   selected_transport_eta=has_dc ? selected_transport_eta : nothing,
                    params=file["params"],
                    meta=meta)
 
@@ -142,6 +170,7 @@ function process_single_config(jld_path; eta_factor=1)
                any(isnan, res.ak0) || (res.ldos0 !== nothing && any(isnan, res.ldos0)) ||
                any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
                any(isnan, res.node_path) ||
+               (res.dc !== nothing && isnan(res.dc)) ||
                (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
                 return nothing
             end
@@ -182,6 +211,7 @@ function compatibility_signature(res)
         node_path_size=size(res.node_path),
         node_from_patch=res.node_from_patch,
         selected_eta=res.selected_eta,
+        selected_transport_eta=res.selected_transport_eta,
         mx_path_kx=meta["mx_path_kx"],
         mx_path_ky=meta["mx_path_ky"],
         mx_path_kx_idx=meta["mx_path_kx_idx"],
@@ -222,6 +252,7 @@ function process_T_directory(dir_path; eta_factor=1)
     samples_mx_path = []
     samples_xg_path = []
     samples_node_path = []
+    samples_dc = Float64[]
     reference_meta = nothing
     reference_params = nothing
     reference_signature = nothing
@@ -267,6 +298,9 @@ function process_T_directory(dir_path; eta_factor=1)
         push!(samples_mx_path, res.mx_path)
         push!(samples_xg_path, res.xg_path)
         push!(samples_node_path, res.node_path)
+        if res.dc !== nothing
+            push!(samples_dc, res.dc)
+        end
     end
 
     real_n = length(samples_opt)
@@ -284,6 +318,14 @@ function process_T_directory(dir_path; eta_factor=1)
     final_mx_path, err_mx_path = calc_stats(samples_mx_path)
     final_xg_path, err_xg_path = calc_stats(samples_xg_path)
     final_node_path, err_node_path = calc_stats(samples_node_path)
+    selected_dc_requested = !isapprox(Float64(eta_factor), 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0)
+    if selected_dc_requested && length(samples_dc) == real_n
+        final_dc, err_dc = calc_scalar_stats(samples_dc)
+        write_selected_dc_csv(joinpath(dir_path, "spectra_dc_cond.csv"),
+                              eta_factor, final_dc, err_dc)
+    else
+        rm(joinpath(dir_path, "spectra_dc_cond.csv"); force=true)
+    end
 
     meta = reference_meta
     omega_grid = meta["omega_grid"]

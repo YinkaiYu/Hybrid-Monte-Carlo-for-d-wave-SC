@@ -54,6 +54,19 @@ function selected_vector(group, multi_key::AbstractString, old_key::AbstractStri
     return group[old_key]
 end
 
+function selected_scalar(group, multi_key::AbstractString, old_key::AbstractString, eta_idx::Int)
+    if haskey(group, multi_key)
+        arr = group[multi_key]
+        ndims(arr) == 1 ||
+            error("$multi_key expected a 1D eta array with eta dimension >= $eta_idx; actual size $(size(arr))")
+        length(arr) >= eta_idx ||
+            error("$multi_key expected eta dimension >= $eta_idx; actual size $(size(arr))")
+        return Float64(arr[eta_idx])
+    end
+    eta_idx == 1 || error("Missing $multi_key for selected eta factor")
+    return Float64(group[old_key])
+end
+
 function selected_matrix(group, multi_key::AbstractString, old_key::AbstractString, eta_idx::Int)
     if haskey(group, multi_key)
         arr = group[multi_key]
@@ -70,6 +83,25 @@ function selected_matrix(group, multi_key::AbstractString, old_key::AbstractStri
     end
     eta_idx == 1 || error("Missing $multi_key for selected eta factor")
     return group[old_key]
+end
+
+function calc_scalar_stats(values::AbstractVector{<:Real})
+    n_samples = length(values)
+    n_samples > 0 || error("Cannot calculate scalar stats for empty data")
+    mean_val = sum(values) / n_samples
+    var_val = 0.0
+    for v in values
+        var_val += abs2(v - mean_val)
+    end
+    var_val /= n_samples
+    return mean_val, sqrt(max(var_val, 0.0) / n_samples)
+end
+
+function write_selected_dc_csv(path, eta_factor, mean_dc::Real, err_dc::Real)
+    open(path, "w") do io
+        println(io, "eta_factor,DC_Conductivity,Error")
+        @printf(io, "%.6g,%.6e,%.6e\n", Float64(eta_factor), mean_dc, err_dc)
+    end
 end
 
 function write_series_csv(path, header, grid, mean_values, err_values)
