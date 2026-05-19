@@ -365,6 +365,7 @@ end
                                  eta_values=[p.η, 2p.η])
 
     @test size(tw.dos_eta, 1) == 2
+    @test size(tw.dos_M_patch_eta, 1) == 2
     @test size(tw.A_MX_path_eta, 1) == 2
     @test size(tw.A_XG_node_patch_eta, 1) == 2
     @test tw.dos == vec(tw.dos_eta[1, :])
