@@ -18,14 +18,34 @@ end
     @test occursin("n_therm=100", script)
     @test occursin("spectra_eta_factors=\"[1.0, 2.0, 5.0, 10.0, 20.0, 40.0, 60.0]\"", script)
     @test occursin("spectra_eta_factors = \$spectra_eta_factors", script)
-    @test occursin("#SBATCH -J yyk/d-wave/L\${L}/imp\${n_imp}/W\${W}/T\${T}", script)
+    @test occursin("n_flux_sc=0", script)
+    @test occursin("boundary_condition=:periodic", script)
+    @test occursin("write_gauge_pair_bonds_freq=0", script)
+    @test occursin("allow_gauge_dependent_spectra=false", script)
+    @test occursin("n_flux_sc = \$n_flux_sc", script)
+    @test occursin("boundary_condition = \$boundary_condition", script)
+    @test occursin("write_gauge_pair_bonds_freq = \$write_gauge_pair_bonds_freq", script)
+    @test occursin("allow_gauge_dependent_spectra = \$allow_gauge_dependent_spectra", script)
+    @test length(findall("n_flux_sc=n_flux_sc, boundary_condition=boundary_condition", script)) == 2
+    @test occursin("JOB_TAG=\"n\${target_n}_Nv\${n_flux_sc}\"", script)
+    @test occursin("JOB_TAG=\"m\${mu}_Nv\${n_flux_sc}\"", script)
+    @test occursin("#SBATCH -J yyk/d-wave/L\${L}/imp\${n_imp}/W\${W}/T\${T}/Nv\${n_flux_sc}/\${JOB_TAG}", script)
 end
 
-@testset "run_conf forwards spectra eta factors" begin
+@testset "run_conf forwards spectra and magnetic options" begin
     script = read_repo_file("projectHPC", "run_conf.jl")
 
     @test occursin("actual_spectra_eta_factors", script)
     @test occursin("actual_spectra_eta_factors,", script)
     @test occursin("spectra_eta_factors=spectra_eta_factors", script)
+    @test occursin("write_gauge_pair_bonds_freq = isdefined(@__MODULE__, :write_gauge_pair_bonds_freq) ? getfield(@__MODULE__, :write_gauge_pair_bonds_freq) : 0", script)
+    @test occursin("allow_gauge_dependent_spectra = isdefined(@__MODULE__, :allow_gauge_dependent_spectra) ? getfield(@__MODULE__, :allow_gauge_dependent_spectra) : false", script)
+    @test occursin(raw"Magnetic options: n_flux_sc=$(p.n_flux_sc), boundary_condition=$(p.boundary_condition)", script)
+    @test occursin(raw"write_gauge_pair_bonds_freq=$(write_gauge_pair_bonds_freq)", script)
+    @test occursin(raw"allow_gauge_dependent_spectra=$(allow_gauge_dependent_spectra)", script)
     @test occursin("worker_task(seed, p,", script)
+    @test occursin("allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq)", script)
+    @test occursin("allow_gauge_dependent_spectra=allow_gauge_dependent_spectra", script)
+    @test occursin("write_gauge_pair_bonds_freq=write_gauge_pair_bonds_freq", script)
+    @test occursin("measure_twist, twist_Ax, twist_qy,\n                allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq)", script)
 end

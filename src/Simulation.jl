@@ -275,6 +275,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
     tee_println("Initializing State...")
     state = initialize_state(p)
     cache = initialize_cache(p)
+    mag_meta = magnetic_metadata(cache.magnetic)
+    tee_println("Magnetic field: n_flux_sc=$(p.n_flux_sc), boundary=$(p.boundary_condition), flux_density_sc=$(mag_meta.flux_density_sc), plaquette_phase=$(mag_meta.plaquette_phase)")
     if p.has_target_n
         tee_println("Mode: target_n=$(p.target_n), μ_init=$(state.μ_eff), μ_range=[$(p.μ_min), $(p.μ_max)], gain=$(p.μ_tune_gain)")
     else
@@ -297,10 +299,18 @@ function run_simulation(p::ModelParameters, out_dir::String;
         ky_grid = effective_k_grid(p.Ly, actual_spectra_Ltw)
         jldsave(spectra_jld_path; params=p,
                 use_twisted_spectra=use_twisted_spectra,
-                n_flux_sc=p.n_flux_sc,
+                n_flux_sc=mag_meta.n_flux_sc,
+                boundary_condition=p.boundary_condition,
+                flux_density_sc=mag_meta.flux_density_sc,
+                plaquette_phase=mag_meta.plaquette_phase,
+                magnetic_gauge=mag_meta.magnetic_gauge,
+                magnetic_pbc=mag_meta.magnetic_pbc,
                 gauge_dependent_spectra=gauge_dependent_spectra,
                 spectra_gauge=spectra_gauge,
                 spectra_interpretation=spectra_interpretation,
+                pairing_scalar_convention=p.n_flux_sc == 0 ? "bare zero-field convention" : "bare Landau-gauge diagnostic",
+                pairing_scalar_gauge_invariant=p.n_flux_sc == 0,
+                conductivity_convention="sigma_xx_regular",
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
@@ -330,10 +340,18 @@ function run_simulation(p::ModelParameters, out_dir::String;
         xg_kx_indices, xg_ky_indices, xg_kx_vals, xg_ky_vals = xg_kpath(p)
         jldsave(spectra_jld_path; params=p,
                 use_twisted_spectra=use_twisted_spectra,
-                n_flux_sc=p.n_flux_sc,
+                n_flux_sc=mag_meta.n_flux_sc,
+                boundary_condition=p.boundary_condition,
+                flux_density_sc=mag_meta.flux_density_sc,
+                plaquette_phase=mag_meta.plaquette_phase,
+                magnetic_gauge=mag_meta.magnetic_gauge,
+                magnetic_pbc=mag_meta.magnetic_pbc,
                 gauge_dependent_spectra=gauge_dependent_spectra,
                 spectra_gauge=spectra_gauge,
                 spectra_interpretation=spectra_interpretation,
+                pairing_scalar_convention=p.n_flux_sc == 0 ? "bare zero-field convention" : "bare Landau-gauge diagnostic",
+                pairing_scalar_gauge_invariant=p.n_flux_sc == 0,
+                conductivity_convention="sigma_xx_regular",
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,

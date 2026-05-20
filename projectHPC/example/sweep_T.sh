@@ -35,6 +35,10 @@ use_twisted_spectra=false
 spectra_eta_factors="[1.0, 2.0, 5.0, 10.0, 20.0, 40.0, 60.0]"
 measure_twist=false
 twist_Ax=0.001
+n_flux_sc=0
+boundary_condition=:periodic
+write_gauge_pair_bonds_freq=0
+allow_gauge_dependent_spectra=false
 
 # 5. HMC参数
 n_therm=100
@@ -89,6 +93,10 @@ m_point_patch_half_width = π / max(Lx, Ly)
 measure_twist = $measure_twist
 twist_Ax = $twist_Ax
 twist_qy = 2π / Ly
+n_flux_sc = $n_flux_sc
+boundary_condition = $boundary_condition
+write_gauge_pair_bonds_freq = $write_gauge_pair_bonds_freq
+allow_gauge_dependent_spectra = $allow_gauge_dependent_spectra
 n_therm = $n_therm
 n_measure = $n_measure
 Nt_therm_init = $Nt_therm_init
@@ -115,9 +123,10 @@ p = ModelParameters(Lx, Ly, t, tp, W, n_imp, β, V, mass;
                     μ_tune_step_max=mu_tune_step_max,
                     μ_tune_tol=mu_tune_tol,
                     μ_min=mu_min, μ_max=mu_max,
+                    n_flux_sc=n_flux_sc, boundary_condition=boundary_condition,
                     η=η, Δω=Δω, ω_max=ω_max)
 EOF
-        JOB_TAG="n${target_n}"
+        JOB_TAG="n${target_n}_Nv${n_flux_sc}"
     else
         cat << EOF >> params.jl
 μ = $mu
@@ -127,16 +136,17 @@ p = ModelParameters(Lx, Ly, t, tp, μ, W, n_imp, β, V, mass;
                     μ_tune_step_max=mu_tune_step_max,
                     μ_tune_tol=mu_tune_tol,
                     μ_min=mu_min, μ_max=mu_max,
+                    n_flux_sc=n_flux_sc, boundary_condition=boundary_condition,
                     η=η, Δω=Δω, ω_max=ω_max)
 EOF
-        JOB_TAG="m${mu}"
+        JOB_TAG="m${mu}_Nv${n_flux_sc}"
     fi
 
     # --- 写入 submit.slurm ---
     # 使用 $N_CORES 变量
     cat << EOF > submit.slurm
 #!/bin/sh
-#SBATCH -J yyk/d-wave/L${L}/imp${n_imp}/W${W}/T${T}
+#SBATCH -J yyk/d-wave/L${L}/imp${n_imp}/W${W}/T${T}/Nv${n_flux_sc}/${JOB_TAG}
 #SBATCH -p $queue
 #SBATCH -N $N_NODES
 #SBATCH -n $N_CORES

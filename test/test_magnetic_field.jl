@@ -261,3 +261,30 @@ end
         end
     end
 end
+
+@testset "Finite-field metadata is written" begin
+    mktempdir() do out_dir
+        p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=-2,
+                                     boundary_condition=:magnetic_pbc)
+        Random.seed!(20260521)
+        run_simulation(p, out_dir;
+                       n_therm=0,
+                       n_measure=1,
+                       Nt_measure=1,
+                       measure_transport_freq=1,
+                       bin_size=1,
+                       verbose=false)
+
+        jldopen(joinpath(out_dir, "spectra_bins.jld2"), "r") do file
+            @test file["n_flux_sc"] == -2
+            @test file["boundary_condition"] == :magnetic_pbc
+            @test file["flux_density_sc"] == -2 / 16
+            @test file["plaquette_phase"] ≈ -π * 2 / 16
+            @test file["magnetic_gauge"] == "Landau gauge"
+            @test file["magnetic_pbc"] == true
+            @test file["pairing_scalar_convention"] == "bare Landau-gauge diagnostic"
+            @test file["pairing_scalar_gauge_invariant"] == false
+            @test file["conductivity_convention"] == "sigma_xx_regular"
+        end
+    end
+end
