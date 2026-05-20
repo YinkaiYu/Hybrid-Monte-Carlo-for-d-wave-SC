@@ -70,6 +70,11 @@ end
     @test_throws ErrorException DwaveHMC.measure_twist_stiffness_qy(cache, p, state;
                                                                     Ax=1.0e-3,
                                                                     qy=2π / p.Ly)
+
+    H_twist = zeros(ComplexF64, 2 * p.N, 2 * p.N)
+    @test_throws ErrorException DwaveHMC.build_twisted_H_BdG!(H_twist, cache, p, state, 1.0e-3)
+    @test_throws ErrorException DwaveHMC.build_twisted_H_BdG_qy!(H_twist, cache, p, state,
+                                                                 1.0e-3, 2π / p.Ly, 0.0)
 end
 
 @testset "Twist stiffness estimator" begin

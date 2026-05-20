@@ -185,6 +185,12 @@ end
     J_probe = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p; qx=0.0, qy=0.0))
 
     @test J_prod ≈ -J_probe atol=1.0e-12 rtol=1.0e-12
+
+    qy = 2π / p.Ly
+    J_prod_qp = Matrix(DwaveHMC.current_operator_matrix(cache, p; qx=0.0, qy=qy))
+    J_prod_qm = Matrix(DwaveHMC.current_operator_matrix(cache, p; qx=0.0, qy=-qy))
+    J_probe_cos = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p; qx=0.0, qy=qy))
+    @test -(J_prod_qp + J_prod_qm) / sqrt(2.0) ≈ J_probe_cos atol=1.0e-12 rtol=1.0e-12
 end
 
 @testset "Finite-field transport is finite and diagnostic curvature is available" begin
