@@ -21,6 +21,23 @@ const SPECTRA_OUTPUT_FILES = [
     "spectra_path_peaks.csv",
 ]
 
+const DOS_M_KEY_PAIRS = [
+    ("dos_M_eta", "dos_M"),
+    ("dos_M_eta_landau_gauge_diagnostic", "dos_M_landau_gauge_diagnostic"),
+]
+const AK0_KEY_PAIRS = [
+    ("A_k0_eta", "A_k0"),
+    ("A_k_omega0_eta_landau_gauge_diagnostic", "A_k_omega0_landau_gauge_diagnostic"),
+]
+const MX_PATH_KEY_PAIRS = [
+    ("A_MX_path_eta", "A_MX_path"),
+    ("A_MX_path_eta_landau_gauge_diagnostic", "A_MX_path_landau_gauge_diagnostic"),
+]
+const XG_PATH_KEY_PAIRS = [
+    ("A_XG_path_eta", "A_XG_path"),
+    ("A_XG_path_eta_landau_gauge_diagnostic", "A_XG_path_landau_gauge_diagnostic"),
+]
+
 function remove_spectra_outputs!(dir_path)
     for filename in SPECTRA_OUTPUT_FILES
         rm(joinpath(dir_path, filename); force=true)
@@ -119,22 +136,44 @@ function process_single_config(jld_path; eta_factor=1)
             sum_dc = has_dc ? selected_scalar(g1, "dc_cond_eta", "dc_cond", eta_idx) : 0.0
             sum_opt = copy(selected_vector(g1, "opt_cond_eta", "opt_cond", eta_idx))
             sum_dos = copy(selected_vector(g1, "dos_eta", "dos", eta_idx))
-            sum_dos_M = copy(selected_vector(g1, "dos_M_eta", "dos_M", eta_idx))
-            sum_ak = copy(selected_matrix(g1, "A_k0_eta", "A_k0", eta_idx))
-            sum_mx_path = copy(selected_matrix(g1, "A_MX_path_eta", "A_MX_path", eta_idx))
-            sum_xg_path = copy(selected_matrix(g1, "A_XG_path_eta", "A_XG_path", eta_idx))
+            first_dos_M = selected_vector_any(g1, DOS_M_KEY_PAIRS, eta_idx)
+            first_ak = selected_matrix_any(g1, AK0_KEY_PAIRS, eta_idx)
+            first_mx_path = selected_matrix_any(g1, MX_PATH_KEY_PAIRS, eta_idx)
+            first_xg_path = selected_matrix_any(g1, XG_PATH_KEY_PAIRS, eta_idx)
+            sum_dos_M = first_dos_M === nothing ? nothing : copy(first_dos_M)
+            sum_ak = first_ak === nothing ? nothing : copy(first_ak)
+            sum_mx_path = first_mx_path === nothing ? nothing : copy(first_mx_path)
+            sum_xg_path = first_xg_path === nothing ? nothing : copy(first_xg_path)
             has_ldos0 = haskey(g1, "LDOS_0") || haskey(g1, "LDOS_0_eta")
             sum_ldos0 = has_ldos0 ? copy(selected_vector(g1, "LDOS_0_eta", "LDOS_0", eta_idx)) : nothing
             has_node_patch = haskey(g1, "A_XG_node_patch") || haskey(g1, "A_XG_node_patch_eta")
             node_source_key = has_node_patch ? "A_XG_node_patch" : "A_XG_path"
             node_multi_key = has_node_patch ? "A_XG_node_patch_eta" : "A_XG_path_eta"
-            sum_node_path = copy(selected_matrix(g1, node_multi_key, node_source_key, eta_idx))
+            sum_node_path = if has_node_patch
+                copy(selected_matrix(g1, node_multi_key, node_source_key, eta_idx))
+            elseif first_xg_path === nothing
+                nothing
+            else
+                copy(first_xg_path)
+            end
             has_patch = haskey(g1, "dos_M_patch") || haskey(g1, "dos_M_patch_eta")
             sum_dos_M_patch = has_patch ? copy(selected_vector(g1, "dos_M_patch_eta", "dos_M_patch", eta_idx)) : nothing
             count = 1
 
             for i in 2:length(sweep_keys)
                 g = file[sweep_keys[i]]
+                sweep_dos_M = selected_vector_any(g, DOS_M_KEY_PAIRS, eta_idx)
+                sweep_ak = selected_matrix_any(g, AK0_KEY_PAIRS, eta_idx)
+                sweep_mx_path = selected_matrix_any(g, MX_PATH_KEY_PAIRS, eta_idx)
+                sweep_xg_path = selected_matrix_any(g, XG_PATH_KEY_PAIRS, eta_idx)
+                (sweep_dos_M === nothing) == (sum_dos_M === nothing) ||
+                    error("Incompatible spectra config: dos_M presence changes across sweeps")
+                (sweep_ak === nothing) == (sum_ak === nothing) ||
+                    error("Incompatible spectra config: A_k0 presence changes across sweeps")
+                (sweep_mx_path === nothing) == (sum_mx_path === nothing) ||
+                    error("Incompatible spectra config: A_MX_path presence changes across sweeps")
+                (sweep_xg_path === nothing) == (sum_xg_path === nothing) ||
+                    error("Incompatible spectra config: A_XG_path presence changes across sweeps")
                 if (haskey(g, "dos_M_patch") || haskey(g, "dos_M_patch_eta")) != has_patch
                     error("Incompatible spectra config: dos_M_patch presence changes across sweeps")
                 end
@@ -152,14 +191,25 @@ function process_single_config(jld_path; eta_factor=1)
                 end
                 sum_opt .+= require_same_shape("opt_cond", selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx), sum_opt)
                 sum_dos .+= require_same_shape("dos", selected_vector(g, "dos_eta", "dos", eta_idx), sum_dos)
-                sum_dos_M .+= require_same_shape("dos_M", selected_vector(g, "dos_M_eta", "dos_M", eta_idx), sum_dos_M)
-                sum_ak .+= require_same_shape("A_k0", selected_matrix(g, "A_k0_eta", "A_k0", eta_idx), sum_ak)
-                sum_mx_path .+= require_same_shape("A_MX_path", selected_matrix(g, "A_MX_path_eta", "A_MX_path", eta_idx), sum_mx_path)
-                sum_xg_path .+= require_same_shape("A_XG_path", selected_matrix(g, "A_XG_path_eta", "A_XG_path", eta_idx), sum_xg_path)
+                if sum_dos_M !== nothing
+                    sum_dos_M .+= require_same_shape("dos_M", sweep_dos_M, sum_dos_M)
+                end
+                if sum_ak !== nothing
+                    sum_ak .+= require_same_shape("A_k0", sweep_ak, sum_ak)
+                end
+                if sum_mx_path !== nothing
+                    sum_mx_path .+= require_same_shape("A_MX_path", sweep_mx_path, sum_mx_path)
+                end
+                if sum_xg_path !== nothing
+                    sum_xg_path .+= require_same_shape("A_XG_path", sweep_xg_path, sum_xg_path)
+                end
                 if has_ldos0
                     sum_ldos0 .+= require_same_shape("LDOS_0", selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx), sum_ldos0)
                 end
-                sum_node_path .+= require_same_shape(node_source_key, selected_matrix(g, node_multi_key, node_source_key, eta_idx), sum_node_path)
+                if sum_node_path !== nothing
+                    node_path = has_node_patch ? selected_matrix(g, node_multi_key, node_source_key, eta_idx) : sweep_xg_path
+                    sum_node_path .+= require_same_shape(node_source_key, node_path, sum_node_path)
+                end
                 if has_patch
                     sum_dos_M_patch .+= require_same_shape("dos_M_patch", selected_vector(g, "dos_M_patch_eta", "dos_M_patch", eta_idx), sum_dos_M_patch)
                 end
@@ -169,23 +219,26 @@ function process_single_config(jld_path; eta_factor=1)
             res = (opt=sum_opt ./ count,
                    dc=has_dc ? (sum_dc / count) : nothing,
                    dos=sum_dos ./ count,
-                   dos_M=sum_dos_M ./ count,
+                   dos_M=sum_dos_M === nothing ? nothing : (sum_dos_M ./ count),
                    dos_M_patch=has_patch ? (sum_dos_M_patch ./ count) : nothing,
-                   ak0=sum_ak ./ count,
+                   ak0=sum_ak === nothing ? nothing : (sum_ak ./ count),
                    ldos0=has_ldos0 ? (sum_ldos0 ./ count) : nothing,
-                   mx_path=sum_mx_path ./ count,
-                   xg_path=sum_xg_path ./ count,
-                   node_path=sum_node_path ./ count,
+                   mx_path=sum_mx_path === nothing ? nothing : (sum_mx_path ./ count),
+                   xg_path=sum_xg_path === nothing ? nothing : (sum_xg_path ./ count),
+                   node_path=sum_node_path === nothing ? nothing : (sum_node_path ./ count),
                    node_from_patch=has_node_patch,
                    selected_eta=selected_eta,
                    selected_transport_eta=has_dc ? selected_transport_eta : nothing,
                    params=file["params"],
                    meta=meta)
 
-            if any(isnan, res.opt) || any(isnan, res.dos) || any(isnan, res.dos_M) ||
-               any(isnan, res.ak0) || (res.ldos0 !== nothing && any(isnan, res.ldos0)) ||
-               any(isnan, res.mx_path) || any(isnan, res.xg_path) ||
-               any(isnan, res.node_path) ||
+            if any(isnan, res.opt) || any(isnan, res.dos) ||
+               (res.dos_M !== nothing && any(isnan, res.dos_M)) ||
+               (res.ak0 !== nothing && any(isnan, res.ak0)) ||
+               (res.ldos0 !== nothing && any(isnan, res.ldos0)) ||
+               (res.mx_path !== nothing && any(isnan, res.mx_path)) ||
+               (res.xg_path !== nothing && any(isnan, res.xg_path)) ||
+               (res.node_path !== nothing && any(isnan, res.node_path)) ||
                (res.dc !== nothing && isnan(res.dc)) ||
                (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
                 return nothing
@@ -218,13 +271,13 @@ function compatibility_signature(res)
         spectra_Ly_eff=meta["spectra_Ly_eff"],
         opt_size=size(res.opt),
         dos_size=size(res.dos),
-        dos_M_size=size(res.dos_M),
+        dos_M_size=res.dos_M === nothing ? nothing : size(res.dos_M),
         dos_M_patch_size=res.dos_M_patch === nothing ? nothing : size(res.dos_M_patch),
-        ak0_size=size(res.ak0),
+        ak0_size=res.ak0 === nothing ? nothing : size(res.ak0),
         ldos0_size=res.ldos0 === nothing ? nothing : size(res.ldos0),
-        mx_path_size=size(res.mx_path),
-        xg_path_size=size(res.xg_path),
-        node_path_size=size(res.node_path),
+        mx_path_size=res.mx_path === nothing ? nothing : size(res.mx_path),
+        xg_path_size=res.xg_path === nothing ? nothing : size(res.xg_path),
+        node_path_size=res.node_path === nothing ? nothing : size(res.node_path),
         node_from_patch=res.node_from_patch,
         selected_eta=res.selected_eta,
         selected_transport_eta=res.selected_transport_eta,
@@ -303,17 +356,27 @@ function process_T_directory(dir_path; eta_factor=1)
 
         push!(samples_opt, res.opt)
         push!(samples_dos, res.dos)
-        push!(samples_dos_M, res.dos_M)
+        if res.dos_M !== nothing
+            push!(samples_dos_M, res.dos_M)
+        end
         if res.dos_M_patch !== nothing
             push!(samples_dos_M_patch, res.dos_M_patch)
         end
-        push!(samples_ak, res.ak0)
+        if res.ak0 !== nothing
+            push!(samples_ak, res.ak0)
+        end
         if res.ldos0 !== nothing
             push!(samples_ldos0, res.ldos0)
         end
-        push!(samples_mx_path, res.mx_path)
-        push!(samples_xg_path, res.xg_path)
-        push!(samples_node_path, res.node_path)
+        if res.mx_path !== nothing
+            push!(samples_mx_path, res.mx_path)
+        end
+        if res.xg_path !== nothing
+            push!(samples_xg_path, res.xg_path)
+        end
+        if res.node_path !== nothing
+            push!(samples_node_path, res.node_path)
+        end
         if res.dc !== nothing
             push!(samples_dc, res.dc)
         end
@@ -329,11 +392,6 @@ function process_T_directory(dir_path; eta_factor=1)
 
     final_opt, err_opt = calc_stats(samples_opt)
     final_dos, err_dos = calc_stats(samples_dos)
-    final_dos_M, err_dos_M = calc_stats(samples_dos_M)
-    final_ak, err_ak = calc_stats(samples_ak)
-    final_mx_path, err_mx_path = calc_stats(samples_mx_path)
-    final_xg_path, err_xg_path = calc_stats(samples_xg_path)
-    final_node_path, err_node_path = calc_stats(samples_node_path)
     selected_dc_requested = !isapprox(Float64(eta_factor), 1.0; atol=DwaveHMC.ETA_FACTOR_ATOL, rtol=0.0)
     if selected_dc_requested && length(samples_dc) == real_n
         final_dc, err_dc = calc_scalar_stats(samples_dc)
@@ -350,17 +408,29 @@ function process_T_directory(dir_path; eta_factor=1)
     write_series_csv(joinpath(dir_path, "spectra_opt_cond.csv"),
                      "omega,Re_Sigma,Error", omega_grid, final_opt, err_opt)
 
-    open(joinpath(dir_path, "spectra_dos.csv"), "w") do io
-        println(io, "omega,DOS,DOS_Error,DOS_M,DOS_M_Error")
-        for i in eachindex(final_dos)
-            @printf(io, "%.6f,%.6e,%.6e,%.6e,%.6e\n",
-                    dos_omega_grid[i], final_dos[i], err_dos[i],
-                    final_dos_M[i], err_dos_M[i])
+    if length(samples_dos_M) == real_n
+        final_dos_M, err_dos_M = calc_stats(samples_dos_M)
+        open(joinpath(dir_path, "spectra_dos.csv"), "w") do io
+            println(io, "omega,DOS,DOS_Error,DOS_M,DOS_M_Error")
+            for i in eachindex(final_dos)
+                @printf(io, "%.6f,%.6e,%.6e,%.6e,%.6e\n",
+                        dos_omega_grid[i], final_dos[i], err_dos[i],
+                        final_dos_M[i], err_dos_M[i])
+            end
         end
+        write_series_csv(joinpath(dir_path, "spectra_dos_M.csv"),
+                         "omega,DOS_M,Error", dos_omega_grid,
+                         final_dos_M, err_dos_M)
+    else
+        open(joinpath(dir_path, "spectra_dos.csv"), "w") do io
+            println(io, "omega,DOS,DOS_Error")
+            for i in eachindex(final_dos)
+                @printf(io, "%.6f,%.6e,%.6e\n",
+                        dos_omega_grid[i], final_dos[i], err_dos[i])
+            end
+        end
+        rm(joinpath(dir_path, "spectra_dos_M.csv"); force=true)
     end
-    write_series_csv(joinpath(dir_path, "spectra_dos_M.csv"),
-                     "omega,DOS_M,Error", dos_omega_grid,
-                     final_dos_M, err_dos_M)
 
     if length(samples_dos_M_patch) == real_n
         final_dos_M_patch, err_dos_M_patch = calc_stats(samples_dos_M_patch)
@@ -371,7 +441,12 @@ function process_T_directory(dir_path; eta_factor=1)
         rm(joinpath(dir_path, "spectra_dos_M_patch.csv"); force=true)
     end
 
-    write_ak_csv(joinpath(dir_path, "spectra_ak0.csv"), final_ak, err_ak)
+    if length(samples_ak) == real_n
+        final_ak, err_ak = calc_stats(samples_ak)
+        write_ak_csv(joinpath(dir_path, "spectra_ak0.csv"), final_ak, err_ak)
+    else
+        rm(joinpath(dir_path, "spectra_ak0.csv"); force=true)
+    end
 
     if length(samples_ldos0) == real_n
         final_ldos0, err_ldos0 = calc_stats(samples_ldos0)
@@ -384,27 +459,39 @@ function process_T_directory(dir_path; eta_factor=1)
 
     mx_kx = fill(meta["mx_path_kx"], length(meta["mx_path_ky"]))
     mx_kx_idx = fill(meta["mx_path_kx_idx"], length(meta["mx_path_ky"]))
-    write_path_csv(joinpath(dir_path, "spectra_MX_path.csv"), final_mx_path,
-                   err_mx_path, dos_omega_grid, mx_kx, meta["mx_path_ky"],
-                   mx_kx_idx, meta["mx_path_ky_idx"])
-    write_path_csv(joinpath(dir_path, "spectra_XG_path.csv"), final_xg_path,
-                   err_xg_path, dos_omega_grid, meta["xg_path_kx"],
-                   meta["xg_path_ky"], meta["xg_path_kx_idx"], meta["xg_path_ky_idx"])
-    final_AN, err_AN, peak_AN = path_observable(final_mx_path, dos_omega_grid,
-                                                mx_kx, meta["mx_path_ky"];
-                                                err_path=err_mx_path,
-                                                radius=DEFAULT_AN_PATH_WINDOW_RADIUS)
-    final_node, err_node, peak_node = path_observable(final_node_path, dos_omega_grid,
-                                                      meta["xg_path_kx"], meta["xg_path_ky"];
-                                                      err_path=err_node_path,
-                                                      radius=0)
-    write_series_csv(joinpath(dir_path, "spectra_dos_AN.csv"),
-                     "omega,DOS_AN,Error", dos_omega_grid, final_AN, err_AN)
-    write_series_csv(joinpath(dir_path, "spectra_dos_node.csv"),
-                     "omega,DOS_node,Error", dos_omega_grid, final_node, err_node)
-    write_peak_summary(joinpath(dir_path, "spectra_path_peaks.csv"),
-                       [(source="ensemble", kind="AN", peak_AN...),
-                        (source="ensemble", kind="node", peak_node...)])
+    if length(samples_mx_path) == real_n && length(samples_xg_path) == real_n &&
+       length(samples_node_path) == real_n
+        final_mx_path, err_mx_path = calc_stats(samples_mx_path)
+        final_xg_path, err_xg_path = calc_stats(samples_xg_path)
+        final_node_path, err_node_path = calc_stats(samples_node_path)
+        write_path_csv(joinpath(dir_path, "spectra_MX_path.csv"), final_mx_path,
+                       err_mx_path, dos_omega_grid, mx_kx, meta["mx_path_ky"],
+                       mx_kx_idx, meta["mx_path_ky_idx"])
+        write_path_csv(joinpath(dir_path, "spectra_XG_path.csv"), final_xg_path,
+                       err_xg_path, dos_omega_grid, meta["xg_path_kx"],
+                       meta["xg_path_ky"], meta["xg_path_kx_idx"], meta["xg_path_ky_idx"])
+        final_AN, err_AN, peak_AN = path_observable(final_mx_path, dos_omega_grid,
+                                                    mx_kx, meta["mx_path_ky"];
+                                                    err_path=err_mx_path,
+                                                    radius=DEFAULT_AN_PATH_WINDOW_RADIUS)
+        final_node, err_node, peak_node = path_observable(final_node_path, dos_omega_grid,
+                                                          meta["xg_path_kx"], meta["xg_path_ky"];
+                                                          err_path=err_node_path,
+                                                          radius=0)
+        write_series_csv(joinpath(dir_path, "spectra_dos_AN.csv"),
+                         "omega,DOS_AN,Error", dos_omega_grid, final_AN, err_AN)
+        write_series_csv(joinpath(dir_path, "spectra_dos_node.csv"),
+                         "omega,DOS_node,Error", dos_omega_grid, final_node, err_node)
+        write_peak_summary(joinpath(dir_path, "spectra_path_peaks.csv"),
+                           [(source="ensemble", kind="AN", peak_AN...),
+                            (source="ensemble", kind="node", peak_node...)])
+    else
+        for name in ("spectra_MX_path.csv", "spectra_XG_path.csv",
+                     "spectra_dos_AN.csv", "spectra_dos_node.csv",
+                     "spectra_path_peaks.csv")
+            rm(joinpath(dir_path, name); force=true)
+        end
+    end
 end
 
 function main()

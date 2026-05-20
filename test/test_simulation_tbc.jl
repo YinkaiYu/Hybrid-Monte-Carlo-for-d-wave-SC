@@ -8,6 +8,13 @@ function tiny_simulation_parameters(Lx::Int=4, Ly::Int=4)
                            η=0.25, Δω=0.25, ω_max=2.0)
 end
 
+function tiny_finite_field_parameters()
+    return ModelParameters(4, 4, 1.0, -0.35, -0.5, 0.0, 0.0, 8.0, 1.0, 1.0;
+                           η=0.25, Δω=0.25, ω_max=2.0,
+                           n_flux_sc=2,
+                           boundary_condition=:magnetic_pbc)
+end
+
 function run_tiny_spectra_simulation(p::ModelParameters, out_dir::String; kwargs...)
     Random.seed!(20260510)
     run_simulation(p, out_dir;
@@ -218,5 +225,105 @@ end
                                                        verbose=false)
             @test !isfile(joinpath(out_dir, "spectra_bins.jld2"))
         end
+    end
+
+    @testset "finite magnetic field disables gauge-dependent spectra by default" begin
+        mktempdir() do out_dir
+            p = tiny_finite_field_parameters()
+            spectra_path = run_tiny_spectra_simulation(p, out_dir;
+                                                       use_twisted_spectra=false)
+
+            jldopen(spectra_path, "r") do file
+                @test file["n_flux_sc"] == 2
+                @test file["gauge_dependent_spectra"] == false
+
+                g = file["sweep_1"]
+                @test haskey(g, "dos")
+                @test haskey(g, "LDOS_0")
+                for key in ("dos_M", "A_k0", "A_MX_path", "A_XG_path",
+                            "dos_M_landau_gauge_diagnostic",
+                            "A_k_omega0_landau_gauge_diagnostic",
+                            "A_MX_path_landau_gauge_diagnostic",
+                            "A_XG_path_landau_gauge_diagnostic")
+                    @test !haskey(g, key)
+                end
+            end
+        end
+    end
+
+    @testset "finite magnetic field diagnostic spectra use warning names" begin
+        mktempdir() do out_dir
+            p = tiny_finite_field_parameters()
+            spectra_path = run_tiny_spectra_simulation(p, out_dir;
+                                                       use_twisted_spectra=false,
+                                                       allow_gauge_dependent_spectra=true)
+
+            jldopen(spectra_path, "r") do file
+                @test file["n_flux_sc"] == 2
+                @test file["gauge_dependent_spectra"] == true
+                @test file["spectra_gauge"] == "Landau gauge"
+                @test occursin("diagnostic", file["spectra_interpretation"])
+
+                g = file["sweep_1"]
+                for key in ("dos_M_landau_gauge_diagnostic",
+                            "A_k_omega0_landau_gauge_diagnostic",
+                            "A_MX_path_landau_gauge_diagnostic",
+                            "A_XG_path_landau_gauge_diagnostic")
+                    @test haskey(g, key)
+                end
+                @test !haskey(g, "dos_M")
+                @test !haskey(g, "A_k0")
+            end
+        end
+    end
+
+    @testset "finite magnetic field rejects incompatible twist features" begin
+        p = tiny_finite_field_parameters()
+        mktempdir() do out_dir
+            err = try
+                run_simulation(p, out_dir;
+                               n_therm=0,
+                               n_measure=0,
+                               use_twisted_spectra=true,
+                               spectra_Ltw=2,
+                               verbose=false)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("use_twisted_spectra", sprint(showerror, err))
+            @test occursin("finite magnetic field", sprint(showerror, err))
+        end
+
+        mktempdir() do out_dir
+            err = try
+                run_simulation(p, out_dir;
+                               n_therm=0,
+                               n_measure=0,
+                               measure_twist=true,
+                               verbose=false)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("measure_twist", sprint(showerror, err))
+            @test occursin("finite magnetic field", sprint(showerror, err))
+        end
+
+        state = initialize_state(p)
+        cache = initialize_cache(p)
+        init_static_H!(cache, p, state)
+        update_H_BdG!(cache, p, state)
+        diagonalize_H_BdG!(cache, p)
+        err = try
+            measure_twisted_spectra(cache, p, state; Ltw=2)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test occursin("finite magnetic field", sprint(showerror, err))
     end
 end

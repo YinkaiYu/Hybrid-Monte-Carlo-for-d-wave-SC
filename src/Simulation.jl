@@ -140,6 +140,7 @@ end
                    measure_twist::Bool=false,
                    twist_Ax::Float64=1e-3,
                    twist_qy::Float64=2π/p.Ly,
+                   allow_gauge_dependent_spectra::Bool=false,
                    write_gauge_pair_bonds_freq::Int=0)
 
 运行完整的 HMC 模拟。
@@ -159,6 +160,7 @@ end
 - `measure_twist`: 是否额外计算 twist benchmark；默认关闭，避免额外对角化
 - `twist_Ax`: twist 有限差分步长
 - `twist_qy`: 横向调制 twist 的动量，默认 `2π/Ly`
+- `allow_gauge_dependent_spectra`: 有限轨道磁场下是否显式输出 Landau gauge 诊断动量谱；默认关闭
 - `write_gauge_pair_bonds_freq`: 每隔多少个测量步向 pairing_scatter.jld2 写出规范协变 bond 配对数组；`0` 表示关闭
 """
 function run_simulation(p::ModelParameters, out_dir::String; 
@@ -177,6 +179,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                         measure_twist::Bool=false,
                         twist_Ax::Float64=1.0e-3,
                         twist_qy::Float64=2π / p.Ly,
+                        allow_gauge_dependent_spectra::Bool=false,
                         write_gauge_pair_bonds_freq::Int=0,
                         verbose::Bool=true)
     
@@ -184,6 +187,23 @@ function run_simulation(p::ModelParameters, out_dir::String;
     spectra_Ltw > 0 || error("spectra_Ltw must be positive")
     m_point_patch_half_width >= 0 || error("m_point_patch_half_width must be nonnegative")
     write_gauge_pair_bonds_freq >= 0 || error("write_gauge_pair_bonds_freq must be nonnegative")
+    finite_field = p.n_flux_sc != 0
+    if finite_field && use_twisted_spectra
+        error("use_twisted_spectra is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
+    end
+    if finite_field && measure_twist
+        error("measure_twist is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
+    end
+    include_momentum_spectra = !finite_field || allow_gauge_dependent_spectra
+    gauge_dependent_spectra = finite_field && allow_gauge_dependent_spectra
+    spectra_gauge = finite_field ? "Landau gauge" : "none"
+    spectra_interpretation = if gauge_dependent_spectra
+        "diagnostic only; not a gauge-invariant momentum-resolved spectral function"
+    elseif finite_field
+        "ordinary momentum-resolved spectra disabled for finite magnetic field"
+    else
+        "ordinary momentum-resolved spectral function"
+    end
 
     actual_spectra_Ltw = use_twisted_spectra ? spectra_Ltw : 1
     spectra_Lx_eff = p.Lx * actual_spectra_Ltw
@@ -243,6 +263,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
     tee_println("System: $(p.Lx)x$(p.Ly), β=$(p.β), V=$(p.V), W=$(p.W), n_imp=$(p.n_imp)")
     tee_println("Config: Therm=$n_therm, Sweep=$n_measure, TransFreq=$measure_transport_freq, BinSize=$bin_size")
     tee_println("Spectra: use_twisted_spectra=$use_twisted_spectra, Ltw=$actual_spectra_Ltw, effective=$(spectra_Lx_eff)x$(spectra_Ly_eff)")
+    if finite_field
+        tee_println("Spectra finite-field mode: gauge_dependent_spectra=$gauge_dependent_spectra, gauge=$spectra_gauge")
+    end
     tee_println("Spectra eta factors: $(actual_spectra_eta_factors)")
     if use_twisted_spectra
         tee_println("Spectra TBC: m_point_patch_half_width=$m_point_patch_half_width, spectra_eta=$actual_spectra_eta, spectra_delta_omega=$actual_spectra_delta_omega")
@@ -274,6 +297,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
         ky_grid = effective_k_grid(p.Ly, actual_spectra_Ltw)
         jldsave(spectra_jld_path; params=p,
                 use_twisted_spectra=use_twisted_spectra,
+                n_flux_sc=p.n_flux_sc,
+                gauge_dependent_spectra=gauge_dependent_spectra,
+                spectra_gauge=spectra_gauge,
+                spectra_interpretation=spectra_interpretation,
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
@@ -303,6 +330,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
         xg_kx_indices, xg_ky_indices, xg_kx_vals, xg_ky_vals = xg_kpath(p)
         jldsave(spectra_jld_path; params=p,
                 use_twisted_spectra=use_twisted_spectra,
+                n_flux_sc=p.n_flux_sc,
+                gauge_dependent_spectra=gauge_dependent_spectra,
+                spectra_gauge=spectra_gauge,
+                spectra_interpretation=spectra_interpretation,
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
@@ -397,23 +428,32 @@ function run_simulation(p::ModelParameters, out_dir::String;
     # 这里采用 lazy initialization (第一次测量时分配内存)
     accum_opt_cond = Vector{Float64}()
     accum_dos = Vector{Float64}()
-    accum_dos_M = Vector{Float64}()
+    accum_dos_M = nothing
     accum_dos_M_patch = nothing
     accum_ldos0 = Vector{Float64}()
-    accum_Ak0 = Matrix{Float64}(undef, 0, 0)
-    accum_AMXpath = Matrix{Float64}(undef, 0, 0)
-    accum_AXGpath = Matrix{Float64}(undef, 0, 0)
+    accum_Ak0 = nothing
+    accum_AMXpath = nothing
+    accum_AXGpath = nothing
     accum_AXGnodePatch = nothing
     accum_dc_eta = Vector{Float64}()
     accum_opt_eta = Matrix{Float64}(undef, 0, 0)
     accum_dos_eta = Matrix{Float64}(undef, 0, 0)
-    accum_dos_M_eta = Matrix{Float64}(undef, 0, 0)
+    accum_dos_M_eta = nothing
     accum_dos_M_patch_eta = nothing
     accum_ldos0_eta = Matrix{Float64}(undef, 0, 0)
-    accum_Ak0_eta = Array{Float64, 3}(undef, 0, 0, 0)
-    accum_AMXpath_eta = Array{Float64, 3}(undef, 0, 0, 0)
-    accum_AXGpath_eta = Array{Float64, 3}(undef, 0, 0, 0)
+    accum_Ak0_eta = nothing
+    accum_AMXpath_eta = nothing
+    accum_AXGpath_eta = nothing
     accum_AXGnodePatch_eta = nothing
+    diagnostic_momentum_names = finite_field && allow_gauge_dependent_spectra
+    dos_M_key = diagnostic_momentum_names ? "dos_M_landau_gauge_diagnostic" : "dos_M"
+    dos_M_eta_key = diagnostic_momentum_names ? "dos_M_eta_landau_gauge_diagnostic" : "dos_M_eta"
+    Ak0_key = diagnostic_momentum_names ? "A_k_omega0_landau_gauge_diagnostic" : "A_k0"
+    Ak0_eta_key = diagnostic_momentum_names ? "A_k_omega0_eta_landau_gauge_diagnostic" : "A_k0_eta"
+    AMXpath_key = diagnostic_momentum_names ? "A_MX_path_landau_gauge_diagnostic" : "A_MX_path"
+    AMXpath_eta_key = diagnostic_momentum_names ? "A_MX_path_eta_landau_gauge_diagnostic" : "A_MX_path_eta"
+    AXGpath_key = diagnostic_momentum_names ? "A_XG_path_landau_gauge_diagnostic" : "A_XG_path"
+    AXGpath_eta_key = diagnostic_momentum_names ? "A_XG_path_eta_landau_gauge_diagnostic" : "A_XG_path_eta"
     
     for i in 1:n_measure
         # 1. HMC 演化
@@ -485,7 +525,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
             else
                 spec_res = measure_transport_and_spectra(cache, p;
                                                          eta_values=actual_spectra_eta_values,
-                                                         reuse_buffers=true)
+                                                         reuse_buffers=true,
+                                                         include_momentum_spectra=include_momentum_spectra)
                 spec_dos_M_patch = nothing
                 spec_xg_node_patch = nothing
                 spec_dos_M_patch_eta = nothing
@@ -518,34 +559,40 @@ function run_simulation(p::ModelParameters, out_dir::String;
             if bin_count == 0
                 accum_opt_cond = copy(spec_res.optical_conductivity)
                 accum_dos = copy(spec_res.dos)
-                accum_dos_M = copy(spec_res.dos_M)
+                accum_dos_M = spec_res.dos_M === nothing ? nothing : copy(spec_res.dos_M)
                 accum_dos_M_patch = spec_dos_M_patch === nothing ? nothing : copy(spec_dos_M_patch)
                 accum_ldos0 = copy(spec_res.ldos_ω0)
-                accum_Ak0 = copy(spec_res.A_k_ω0)
-                accum_AMXpath = copy(spec_res.A_MX_path)
-                accum_AXGpath = copy(spec_res.A_XG_path)
+                accum_Ak0 = spec_res.A_k_ω0 === nothing ? nothing : copy(spec_res.A_k_ω0)
+                accum_AMXpath = spec_res.A_MX_path === nothing ? nothing : copy(spec_res.A_MX_path)
+                accum_AXGpath = spec_res.A_XG_path === nothing ? nothing : copy(spec_res.A_XG_path)
                 accum_AXGnodePatch = spec_xg_node_patch === nothing ? nothing : copy(spec_xg_node_patch)
                 accum_dc_eta = copy(spec_res.dc_conductivity_eta)
                 accum_opt_eta = copy(spec_res.optical_conductivity_eta)
                 accum_dos_eta = copy(spec_res.dos_eta)
-                accum_dos_M_eta = copy(spec_res.dos_M_eta)
+                accum_dos_M_eta = spec_res.dos_M_eta === nothing ? nothing : copy(spec_res.dos_M_eta)
                 accum_dos_M_patch_eta = spec_dos_M_patch_eta === nothing ? nothing : copy(spec_dos_M_patch_eta)
                 accum_ldos0_eta = copy(spec_res.ldos_ω0_eta)
-                accum_Ak0_eta = copy(spec_res.A_k_ω0_eta)
-                accum_AMXpath_eta = copy(spec_res.A_MX_path_eta)
-                accum_AXGpath_eta = copy(spec_res.A_XG_path_eta)
+                accum_Ak0_eta = spec_res.A_k_ω0_eta === nothing ? nothing : copy(spec_res.A_k_ω0_eta)
+                accum_AMXpath_eta = spec_res.A_MX_path_eta === nothing ? nothing : copy(spec_res.A_MX_path_eta)
+                accum_AXGpath_eta = spec_res.A_XG_path_eta === nothing ? nothing : copy(spec_res.A_XG_path_eta)
                 accum_AXGnodePatch_eta = spec_xg_node_patch_eta === nothing ? nothing : copy(spec_xg_node_patch_eta)
                 bin_count = 1
             else
                 accum_opt_cond .+= spec_res.optical_conductivity
                 accum_dos .+= spec_res.dos
-                accum_dos_M .+= spec_res.dos_M
                 accum_dc_eta .+= spec_res.dc_conductivity_eta
                 accum_opt_eta .+= spec_res.optical_conductivity_eta
                 accum_dos_eta .+= spec_res.dos_eta
-                accum_dos_M_eta .+= spec_res.dos_M_eta
                 accum_ldos0 .+= spec_res.ldos_ω0
                 accum_ldos0_eta .+= spec_res.ldos_ω0_eta
+                if spec_res.dos_M !== nothing
+                    accum_dos_M === nothing && error("dos_M accumulator missing for momentum spectra")
+                    accum_dos_M .+= spec_res.dos_M
+                end
+                if spec_res.dos_M_eta !== nothing
+                    accum_dos_M_eta === nothing && error("dos_M_eta accumulator missing for momentum spectra")
+                    accum_dos_M_eta .+= spec_res.dos_M_eta
+                end
                 if spec_dos_M_patch !== nothing
                     accum_dos_M_patch === nothing && error("dos_M_patch accumulator missing for TBC spectra")
                     accum_dos_M_patch .+= spec_dos_M_patch
@@ -554,12 +601,30 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     accum_dos_M_patch_eta === nothing && error("dos_M_patch_eta accumulator missing for TBC spectra")
                     accum_dos_M_patch_eta .+= spec_dos_M_patch_eta
                 end
-                accum_Ak0 .+= spec_res.A_k_ω0
-                accum_AMXpath .+= spec_res.A_MX_path
-                accum_AXGpath .+= spec_res.A_XG_path
-                accum_Ak0_eta .+= spec_res.A_k_ω0_eta
-                accum_AMXpath_eta .+= spec_res.A_MX_path_eta
-                accum_AXGpath_eta .+= spec_res.A_XG_path_eta
+                if spec_res.A_k_ω0 !== nothing
+                    accum_Ak0 === nothing && error("A_k_ω0 accumulator missing for momentum spectra")
+                    accum_Ak0 .+= spec_res.A_k_ω0
+                end
+                if spec_res.A_MX_path !== nothing
+                    accum_AMXpath === nothing && error("A_MX_path accumulator missing for momentum spectra")
+                    accum_AMXpath .+= spec_res.A_MX_path
+                end
+                if spec_res.A_XG_path !== nothing
+                    accum_AXGpath === nothing && error("A_XG_path accumulator missing for momentum spectra")
+                    accum_AXGpath .+= spec_res.A_XG_path
+                end
+                if spec_res.A_k_ω0_eta !== nothing
+                    accum_Ak0_eta === nothing && error("A_k_ω0_eta accumulator missing for momentum spectra")
+                    accum_Ak0_eta .+= spec_res.A_k_ω0_eta
+                end
+                if spec_res.A_MX_path_eta !== nothing
+                    accum_AMXpath_eta === nothing && error("A_MX_path_eta accumulator missing for momentum spectra")
+                    accum_AMXpath_eta .+= spec_res.A_MX_path_eta
+                end
+                if spec_res.A_XG_path_eta !== nothing
+                    accum_AXGpath_eta === nothing && error("A_XG_path_eta accumulator missing for momentum spectra")
+                    accum_AXGpath_eta .+= spec_res.A_XG_path_eta
+                end
                 if spec_xg_node_patch !== nothing
                     accum_AXGnodePatch === nothing && error("A_XG_node_patch accumulator missing for TBC spectra")
                     accum_AXGnodePatch .+= spec_xg_node_patch
@@ -576,25 +641,41 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 # 求平均
                 accum_opt_cond ./= bin_count
                 accum_dos ./= bin_count
-                accum_dos_M ./= bin_count
                 accum_dc_eta ./= bin_count
                 accum_opt_eta ./= bin_count
                 accum_dos_eta ./= bin_count
-                accum_dos_M_eta ./= bin_count
                 accum_ldos0 ./= bin_count
                 accum_ldos0_eta ./= bin_count
+                if accum_dos_M !== nothing
+                    accum_dos_M ./= bin_count
+                end
+                if accum_dos_M_eta !== nothing
+                    accum_dos_M_eta ./= bin_count
+                end
                 if accum_dos_M_patch !== nothing
                     accum_dos_M_patch ./= bin_count
                 end
                 if accum_dos_M_patch_eta !== nothing
                     accum_dos_M_patch_eta ./= bin_count
                 end
-                accum_Ak0 ./= bin_count
-                accum_AMXpath ./= bin_count
-                accum_AXGpath ./= bin_count
-                accum_Ak0_eta ./= bin_count
-                accum_AMXpath_eta ./= bin_count
-                accum_AXGpath_eta ./= bin_count
+                if accum_Ak0 !== nothing
+                    accum_Ak0 ./= bin_count
+                end
+                if accum_AMXpath !== nothing
+                    accum_AMXpath ./= bin_count
+                end
+                if accum_AXGpath !== nothing
+                    accum_AXGpath ./= bin_count
+                end
+                if accum_Ak0_eta !== nothing
+                    accum_Ak0_eta ./= bin_count
+                end
+                if accum_AMXpath_eta !== nothing
+                    accum_AMXpath_eta ./= bin_count
+                end
+                if accum_AXGpath_eta !== nothing
+                    accum_AXGpath_eta ./= bin_count
+                end
                 if accum_AXGnodePatch !== nothing
                     accum_AXGnodePatch ./= bin_count
                 end
@@ -610,11 +691,15 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     g = JLD2.Group(file, group_name)
                     g["opt_cond"] = accum_opt_cond
                     g["dos"] = accum_dos
-                    g["dos_M"] = accum_dos_M
                     g["dc_cond_eta"] = accum_dc_eta
                     g["opt_cond_eta"] = accum_opt_eta
                     g["dos_eta"] = accum_dos_eta
-                    g["dos_M_eta"] = accum_dos_M_eta
+                    if accum_dos_M !== nothing
+                        g[dos_M_key] = accum_dos_M
+                    end
+                    if accum_dos_M_eta !== nothing
+                        g[dos_M_eta_key] = accum_dos_M_eta
+                    end
                     if accum_dos_M_patch !== nothing
                         g["dos_M_patch"] = accum_dos_M_patch
                     end
@@ -622,13 +707,25 @@ function run_simulation(p::ModelParameters, out_dir::String;
                         g["dos_M_patch_eta"] = accum_dos_M_patch_eta
                     end
                     g["LDOS_0"] = accum_ldos0
-                    g["A_k0"] = accum_Ak0
-                    g["A_MX_path"] = accum_AMXpath
-                    g["A_XG_path"] = accum_AXGpath
                     g["LDOS_0_eta"] = accum_ldos0_eta
-                    g["A_k0_eta"] = accum_Ak0_eta
-                    g["A_MX_path_eta"] = accum_AMXpath_eta
-                    g["A_XG_path_eta"] = accum_AXGpath_eta
+                    if accum_Ak0 !== nothing
+                        g[Ak0_key] = accum_Ak0
+                    end
+                    if accum_AMXpath !== nothing
+                        g[AMXpath_key] = accum_AMXpath
+                    end
+                    if accum_AXGpath !== nothing
+                        g[AXGpath_key] = accum_AXGpath
+                    end
+                    if accum_Ak0_eta !== nothing
+                        g[Ak0_eta_key] = accum_Ak0_eta
+                    end
+                    if accum_AMXpath_eta !== nothing
+                        g[AMXpath_eta_key] = accum_AMXpath_eta
+                    end
+                    if accum_AXGpath_eta !== nothing
+                        g[AXGpath_eta_key] = accum_AXGpath_eta
+                    end
                     if accum_AXGnodePatch !== nothing
                         g["A_XG_node_patch"] = accum_AXGnodePatch
                     end

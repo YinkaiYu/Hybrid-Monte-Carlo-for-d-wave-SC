@@ -56,7 +56,12 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                                  xg_k=[0.0, 0.25, 0.5, 0.75, 1.0],
                                  use_twisted_spectra=true,
                                  spectra_Ltw=2,
+                                 momentum_mode=:old,
                                  multi_eta=true)
+    momentum_mode in (:old, :diagnostic, :none) ||
+        error("unknown momentum_mode=$momentum_mode")
+    include_momentum = momentum_mode !== :none
+    diagnostic_momentum = momentum_mode === :diagnostic
     mkpath(dir)
     p = tiny_params()
     jldopen(joinpath(dir, "spectra_bins.jld2"), "w") do file
@@ -89,14 +94,22 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
             prefix = "sweep_$sweep"
             file["$prefix/opt_cond"] = [1.0, 2.0] .+ offset .+ sweep
             file["$prefix/dos"] = [3.0, 4.0, 5.0] .+ offset .+ sweep
-            file["$prefix/dos_M"] = [6.0, 7.0, 8.0] .+ offset .+ sweep
+            if include_momentum
+                dos_m_key = diagnostic_momentum ? "dos_M_landau_gauge_diagnostic" : "dos_M"
+                file["$prefix/$dos_m_key"] = [6.0, 7.0, 8.0] .+ offset .+ sweep
+            end
             if use_twisted_spectra
                 file["$prefix/dos_M_patch"] = [10.0, 20.0, 30.0] .+ offset .+ sweep
             end
             file["$prefix/LDOS_0"] = collect(1.0:4.0) .+ offset .+ sweep
-            file["$prefix/A_k0"] = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
-            file["$prefix/A_MX_path"] = mx_path .+ offset .+ sweep
-            file["$prefix/A_XG_path"] = xg_path .+ offset .+ sweep
+            if include_momentum
+                ak_key = diagnostic_momentum ? "A_k_omega0_landau_gauge_diagnostic" : "A_k0"
+                mx_key = diagnostic_momentum ? "A_MX_path_landau_gauge_diagnostic" : "A_MX_path"
+                xg_key = diagnostic_momentum ? "A_XG_path_landau_gauge_diagnostic" : "A_XG_path"
+                file["$prefix/$ak_key"] = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
+                file["$prefix/$mx_key"] = mx_path .+ offset .+ sweep
+                file["$prefix/$xg_key"] = xg_path .+ offset .+ sweep
+            end
             if use_twisted_spectra
                 file["$prefix/A_XG_node_patch"] = xg_node_patch .+ offset .+ sweep
             end
@@ -119,19 +132,33 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                 file["$prefix/dc_cond_eta"] = [100.0, 200.0, 400.0] .+ offset .+ sweep
                 file["$prefix/opt_cond_eta"] = stack_eta_vector(opt_base)
                 file["$prefix/dos_eta"] = stack_eta_vector(dos_base)
-                file["$prefix/dos_M_eta"] = stack_eta_vector(dos_M_base)
+                if include_momentum
+                    dos_m_eta_key = diagnostic_momentum ? "dos_M_eta_landau_gauge_diagnostic" : "dos_M_eta"
+                    file["$prefix/$dos_m_eta_key"] = stack_eta_vector(dos_M_base)
+                end
                 if use_twisted_spectra
                     file["$prefix/dos_M_patch_eta"] = stack_eta_vector([10.0, 20.0, 30.0] .+ offset .+ sweep)
                 end
                 file["$prefix/LDOS_0_eta"] = stack_eta_vector(ldos_base)
-                file["$prefix/A_k0_eta"] = stack_eta_matrix(ak_base)
-                file["$prefix/A_MX_path_eta"] = stack_eta_matrix(mx_base)
-                file["$prefix/A_XG_path_eta"] = stack_eta_matrix(xg_base)
+                if include_momentum
+                    ak_eta_key = diagnostic_momentum ? "A_k_omega0_eta_landau_gauge_diagnostic" : "A_k0_eta"
+                    mx_eta_key = diagnostic_momentum ? "A_MX_path_eta_landau_gauge_diagnostic" : "A_MX_path_eta"
+                    xg_eta_key = diagnostic_momentum ? "A_XG_path_eta_landau_gauge_diagnostic" : "A_XG_path_eta"
+                    file["$prefix/$ak_eta_key"] = stack_eta_matrix(ak_base)
+                    file["$prefix/$mx_eta_key"] = stack_eta_matrix(mx_base)
+                    file["$prefix/$xg_eta_key"] = stack_eta_matrix(xg_base)
+                end
                 if use_twisted_spectra
                     file["$prefix/A_XG_node_patch_eta"] = stack_eta_matrix(node_patch_base)
                 end
             end
         end
+    end
+end
+
+function touch_csv(path)
+    open(path, "w") do io
+        println(io, "stale")
     end
 end
 
@@ -171,6 +198,52 @@ end
         @test csv_data_rows(joinpath(target_dir, "processed_ldos0.csv")) == 4
         @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 8.0
         @test first_data_value(joinpath(target_dir, "processed_dos_node.csv"), 2) == 6.0
+    end
+end
+
+@testset "process_spectra.jl skips missing optional momentum outputs and removes stale files" begin
+    mktempdir() do root
+        target_dir = joinpath(root, PROCESS_TARGET_REL)
+        write_synthetic_spectra(target_dir;
+                                nsweeps=1,
+                                use_twisted_spectra=false,
+                                spectra_Ltw=1,
+                                momentum_mode=:none)
+        for name in ("processed_dos_M.csv", "processed_ak0.csv",
+                     "processed_MX_path.csv", "processed_XG_path.csv",
+                     "processed_dos_AN.csv", "processed_dos_node.csv",
+                     "processed_path_peaks.csv")
+            touch_csv(joinpath(target_dir, name))
+        end
+
+        Base.invokelatest(ProcessSpectraScript.process_spectra_directory, target_dir)
+
+        @test isfile(joinpath(target_dir, "processed_dos.csv"))
+        @test isfile(joinpath(target_dir, "processed_ldos0.csv"))
+        for name in ("processed_dos_M.csv", "processed_ak0.csv",
+                     "processed_MX_path.csv", "processed_XG_path.csv",
+                     "processed_dos_AN.csv", "processed_dos_node.csv",
+                     "processed_path_peaks.csv")
+            @test !isfile(joinpath(target_dir, name))
+        end
+    end
+end
+
+@testset "process_spectra.jl reads finite-field diagnostic momentum names" begin
+    mktempdir() do root
+        target_dir = joinpath(root, PROCESS_TARGET_REL)
+        write_synthetic_spectra(target_dir;
+                                nsweeps=1,
+                                use_twisted_spectra=false,
+                                spectra_Ltw=1,
+                                momentum_mode=:diagnostic)
+        Base.invokelatest(ProcessSpectraScript.process_spectra_directory, target_dir)
+
+        @test csv_data_rows(joinpath(target_dir, "processed_ak0.csv")) == 16
+        @test isfile(joinpath(target_dir, "processed_dos_M.csv"))
+        @test isfile(joinpath(target_dir, "processed_MX_path.csv"))
+        @test isfile(joinpath(target_dir, "processed_XG_path.csv"))
+        @test first_data_value(joinpath(target_dir, "processed_dos_M.csv"), 2) == 7.0
     end
 end
 

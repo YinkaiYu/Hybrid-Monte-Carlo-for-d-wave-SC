@@ -226,6 +226,8 @@ function measure_twisted_spectra(cache::ComputeCache,
                                  spectra_delta_omega::Float64=p.Δω,
                                  eta_values::AbstractVector{<:Real}=Float64[spectra_eta],
                                  reuse_buffers::Bool=false)
+    p.n_flux_sc == 0 ||
+        error("measure_twisted_spectra is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
     Ltw <= 0 && error("Ltw must be positive")
     m_point_patch_half_width < 0 && error("m_point_patch_half_width must be nonnegative")
     spectra_eta > 0 || error("spectra_eta must be positive")

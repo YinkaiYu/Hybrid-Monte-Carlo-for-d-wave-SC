@@ -86,6 +86,28 @@ function selected_matrix(group, multi_key::AbstractString, old_key::AbstractStri
     return group[old_key]
 end
 
+function has_any_key(group, names)
+    return any(name -> haskey(group, name), names)
+end
+
+function selected_vector_any(group, key_pairs, eta_idx::Int)
+    for (multi_key, old_key) in key_pairs
+        if haskey(group, multi_key) || haskey(group, old_key)
+            return selected_vector(group, multi_key, old_key, eta_idx)
+        end
+    end
+    return nothing
+end
+
+function selected_matrix_any(group, key_pairs, eta_idx::Int)
+    for (multi_key, old_key) in key_pairs
+        if haskey(group, multi_key) || haskey(group, old_key)
+            return selected_matrix(group, multi_key, old_key, eta_idx)
+        end
+    end
+    return nothing
+end
+
 function calc_scalar_stats(values::AbstractVector{<:Real})
     n_samples = length(values)
     n_samples > 0 || error("Cannot calculate scalar stats for empty data")
