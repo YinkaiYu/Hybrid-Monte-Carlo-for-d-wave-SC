@@ -120,6 +120,12 @@ struct TwistQyStiffnessResult
     rho_offdiag_corrected::Float64
 end
 
+struct FullCurvatureDiagnostic
+    qy::Float64
+    rho_full_curvature::Float64
+    lambda_diag::Float64
+end
+
 """
     fermion_logdet_action_from_eigs(E, β)
 
@@ -220,6 +226,27 @@ function measure_kubo_diag_correction_qy(cache::ComputeCache,
     return Lambda_diag / p.N
 end
 
+function measure_probe_diag_correction_qy(cache::ComputeCache,
+                                          p::ModelParameters;
+                                          qy::Float64=2π / p.Ly)
+    dim = 2 * p.N
+    β = p.β
+    U = cache.U
+    E = cache.E_n
+    J_probe = probe_current_operator_matrix(cache, p; qx=0.0, qy=qy)
+
+    mul!(cache.temp_JU, J_probe, U)
+    mul!(cache.J_mn, U', cache.temp_JU)
+
+    lambda_diag = 0.0
+    @inbounds for n in 1:dim
+        f_n = logistic(-β * E[n])
+        lambda_diag += β * f_n * (1.0 - f_n) * abs2(cache.J_mn[n, n])
+    end
+
+    return lambda_diag / p.N
+end
+
 """
     measure_twist_stiffness_qy(cache, p, state; Ax=1e-3, qy=2π/Ly)
 
@@ -247,6 +274,55 @@ function measure_twist_stiffness_qy(cache::ComputeCache,
 
     return TwistQyStiffnessResult(Ax, qy, rho_cos, rho_sin, rho_avg,
                                   diag_correction, rho_offdiag_corrected)
+end
+
+function measure_full_curvature_diagnostic(cache::ComputeCache,
+                                           p::ModelParameters,
+                                           state::SimulationState;
+                                           Ax::Float64=1.0e-4,
+                                           qy::Float64=2π / p.Ly)
+    H = zeros(ComplexF64, 2 * p.N, 2 * p.N)
+    build_probe_H_BdG!(H, cache, p, state; λ=0.0, qx=0.0, qy=qy)
+    S0 = fermion_logdet_action_from_eigs(eigvals!(Hermitian(H, :U)), p.β)
+    build_probe_H_BdG!(H, cache, p, state; λ=Ax, qx=0.0, qy=qy)
+    Splus = fermion_logdet_action_from_eigs(eigvals!(Hermitian(H, :U)), p.β)
+    build_probe_H_BdG!(H, cache, p, state; λ=-Ax, qx=0.0, qy=qy)
+    Sminus = fermion_logdet_action_from_eigs(eigvals!(Hermitian(H, :U)), p.β)
+    rho = (Splus + Sminus - 2S0) / (Ax^2 * p.β * p.N)
+    lambda_diag = measure_probe_diag_correction_qy(cache, p; qy=qy)
+    return FullCurvatureDiagnostic(qy, rho, lambda_diag)
+end
+
+function diamagnetic_expectation_x(cache::ComputeCache, p::ModelParameters)
+    N = p.N
+    dim = 2 * N
+    β = p.β
+    U = cache.U
+    E = cache.E_n
+    mag = cache.magnetic
+    total = 0.0
+    @inbounds for n in 1:dim
+        En = E[n]
+        if En > 0
+            w_n = 0.0
+            @simd for i in 1:N
+                j = p.nn_table[i, 1]
+                ph = link_phase(mag, i, 1, 0)
+                w_n += 2.0 * real(p.t * ph * (U[i+N, n] * conj(U[j+N, n]) -
+                                               conj(U[i, n]) * U[j, n]))
+                j = p.nnn_table[i, 1]
+                ph = link_phase(mag, i, 1, 1)
+                w_n += 2.0 * real(p.tp * ph * (U[i+N, n] * conj(U[j+N, n]) -
+                                                conj(U[i, n]) * U[j, n]))
+                j = p.nnn_table[i, 4]
+                ph = link_phase(mag, i, 1, -1)
+                w_n += 2.0 * real(p.tp * ph * (U[i+N, n] * conj(U[j+N, n]) -
+                                                conj(U[i, n]) * U[j, n]))
+            end
+            total += w_n * tanh(0.5 * β * En) / N
+        end
+    end
+    return total
 end
 
 """
@@ -808,25 +884,7 @@ function measure_transport_only(cache::ComputeCache, p::ModelParameters;
     # ------------------------------------------------
     # 1. 抗磁项 < -Kx >
     
-    val_dia = 0.0
-
-    @inbounds for n in 1:dim
-        En = E[n]
-        if En > 0
-            w_n = 0.0 
-            @simd for i in 1:N 
-                # u_{i,n} -> U[i, n] 
-                # v_{i,n} -> U[i+N, n] 
-                j_x = p.nn_table[i, 1] 
-                j_xpy = p.nnn_table[i, 1] 
-                j_xmy = p.nnn_table[i, 4] 
-                w_n += p.t  * 2.0 * real( U[i+N,n]*conj(U[j_x+N,n]) - conj(U[i,n])*U[j_x,n] )
-                w_n += p.tp * 2.0 * real( U[i+N,n]*conj(U[j_xpy+N,n]) - conj(U[i,n])*U[j_xpy,n] )
-                w_n += p.tp * 2.0 * real( U[i+N,n]*conj(U[j_xmy+N,n]) - conj(U[i,n])*U[j_xmy,n] )
-            end
-            val_dia += w_n * tanh(0.5 * β * En) / N
-        end
-    end
+    val_dia = diamagnetic_expectation_x(cache, p)
     
     # 2. 顺磁项 Lambda_xx(qx=0, qy=2π/Ly)
     # sum_{n≠m} (f(n) - f(m))/(Em - En) |J_nm(q)|^2

@@ -155,3 +155,31 @@ end
         end
     end
 end
+
+@testset "Finite-field transport is finite and diagnostic curvature is available" begin
+    p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2, boundary_condition=:magnetic_pbc)
+    state = random_finite_field_state(p)
+    cache = initialize_cache(p)
+    init_static_H!(cache, p, state)
+    update_H_BdG!(cache, p, state)
+    diagonalize_H_BdG!(cache, p)
+
+    res = DwaveHMC.measure_transport_only(cache, p; eta_values=[p.η], reuse_buffers=false)
+    @test isfinite(res.superfluid_stiffness)
+    @test isfinite(res.dc_conductivity)
+    @test length(res.optical_conductivity) == length(cache.omega_grid)
+
+    K0 = DwaveHMC.diamagnetic_operator_matrix(cache, p; qx=0.0, qy=0.0)
+    dia_from_matrix = 0.0
+    for n in 1:(2 * p.N)
+        if cache.E_n[n] > 0
+            ψn = @view cache.U[:, n]
+            dia_from_matrix += -real(dot(ψn, K0 * ψn)) * tanh(0.5 * p.β * cache.E_n[n]) / p.N
+        end
+    end
+    @test DwaveHMC.diamagnetic_expectation_x(cache, p) ≈ dia_from_matrix atol=1.0e-10
+
+    diag = DwaveHMC.measure_full_curvature_diagnostic(cache, p, state; Ax=1.0e-4, qy=2π / p.Ly)
+    @test isfinite(diag.rho_full_curvature)
+    @test isfinite(diag.lambda_diag)
+end
