@@ -49,6 +49,8 @@ end
     @test_throws ErrorException magnetic_test_parameters(n_flux_sc=2, boundary_condition=:periodic)
     @test_throws ErrorException magnetic_test_parameters(n_flux_sc=2, n_vortices=-2,
                                                          boundary_condition=:magnetic_pbc)
+    @test_throws ErrorException magnetic_test_parameters(Lx=1, Ly=4)
+    @test_throws ErrorException magnetic_test_parameters(Lx=4, Ly=1)
 end
 
 @testset "Landau gauge link phases" begin

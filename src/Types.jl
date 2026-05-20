@@ -85,6 +85,9 @@ function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool
                                  n_flux_sc::Int=0,
                                  n_vortices::Union{Nothing,Int}=nothing,
                                  boundary_condition::Symbol=:periodic)
+    if Lx < 2 || Ly < 2
+        error("Lx and Ly must both be >= 2 for the 2D d-wave lattice")
+    end
     if μ_tune_interval <= 0
         error("μ_tune_interval must be > 0")
     end
