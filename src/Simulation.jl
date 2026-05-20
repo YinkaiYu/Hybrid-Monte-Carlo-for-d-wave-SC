@@ -139,7 +139,8 @@ end
                    spectra_delta_omega=nothing,
                    measure_twist::Bool=false,
                    twist_Ax::Float64=1e-3,
-                   twist_qy::Float64=2π/p.Ly)
+                   twist_qy::Float64=2π/p.Ly,
+                   write_gauge_pair_bonds_freq::Int=0)
 
 运行完整的 HMC 模拟。
 
@@ -158,6 +159,7 @@ end
 - `measure_twist`: 是否额外计算 twist benchmark；默认关闭，避免额外对角化
 - `twist_Ax`: twist 有限差分步长
 - `twist_qy`: 横向调制 twist 的动量，默认 `2π/Ly`
+- `write_gauge_pair_bonds_freq`: 每隔多少个测量步向 pairing_scatter.jld2 写出规范协变 bond 配对数组；`0` 表示关闭
 """
 function run_simulation(p::ModelParameters, out_dir::String; 
                         n_therm::Int=100, 
@@ -175,11 +177,13 @@ function run_simulation(p::ModelParameters, out_dir::String;
                         measure_twist::Bool=false,
                         twist_Ax::Float64=1.0e-3,
                         twist_qy::Float64=2π / p.Ly,
+                        write_gauge_pair_bonds_freq::Int=0,
                         verbose::Bool=true)
     
     # --- 1. 环境准备 ---
     spectra_Ltw > 0 || error("spectra_Ltw must be positive")
     m_point_patch_half_width >= 0 || error("m_point_patch_half_width must be nonnegative")
+    write_gauge_pair_bonds_freq >= 0 || error("write_gauge_pair_bonds_freq must be nonnegative")
 
     actual_spectra_Ltw = use_twisted_spectra ? spectra_Ltw : 1
     spectra_Lx_eff = p.Lx * actual_spectra_Ltw
@@ -434,6 +438,11 @@ function run_simulation(p::ModelParameters, out_dir::String;
             group_name = "sweep_$i"
             g = JLD2.Group(file, group_name)
             g["d_local"] = obs.d_local
+            if write_gauge_pair_bonds_freq > 0 && i % write_gauge_pair_bonds_freq == 0
+                delta_bond, pair_bond = compute_gauge_pair_bonds(cache, p, state)
+                g["delta_bond_landau_gauge_covariant"] = delta_bond
+                g["pair_bond_landau_gauge_covariant"] = pair_bond
+            end
         end
         
         # 3. 重量级测量 (Every Freq Step)

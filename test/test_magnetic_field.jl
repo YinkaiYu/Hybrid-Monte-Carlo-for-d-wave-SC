@@ -183,3 +183,24 @@ end
     @test isfinite(diag.rho_full_curvature)
     @test isfinite(diag.lambda_diag)
 end
+
+@testset "Gauge-covariant pair bond output" begin
+    mktempdir() do out_dir
+        p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2, boundary_condition=:magnetic_pbc)
+        Random.seed!(20260521)
+        run_simulation(p, out_dir;
+                       n_therm=0,
+                       n_measure=2,
+                       Nt_measure=1,
+                       measure_transport_freq=2,
+                       bin_size=1,
+                       write_gauge_pair_bonds_freq=1,
+                       verbose=false)
+        jldopen(joinpath(out_dir, "pairing_scatter.jld2"), "r") do file
+            @test haskey(file, "sweep_1/delta_bond_landau_gauge_covariant")
+            @test haskey(file, "sweep_1/pair_bond_landau_gauge_covariant")
+            @test size(file["sweep_1/delta_bond_landau_gauge_covariant"]) == (p.N, 2)
+            @test size(file["sweep_1/pair_bond_landau_gauge_covariant"]) == (p.N, 2)
+        end
+    end
+end

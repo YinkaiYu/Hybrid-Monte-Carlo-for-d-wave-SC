@@ -62,6 +62,41 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
     return nothing
 end
 
+function compute_gauge_pair_bonds(cache::ComputeCache, p::ModelParameters, state::SimulationState)
+    N = p.N
+    U = cache.U
+    E = cache.E_n
+    f = cache.fermi_factors
+    g_pair = pairing_coupling(p)
+
+    @inbounds @simd for n in 1:(2 * N)
+        f[n] = logistic(-p.β * E[n])
+    end
+
+    delta_bond = Matrix{ComplexF64}(undef, N, 2)
+    pair_bond = Matrix{ComplexF64}(undef, N, 2)
+
+    @inbounds for i in 1:N
+        for dir in 1:2
+            j = p.nn_table[i, dir]
+            rho_1 = zero(ComplexF64)
+            rho_2 = zero(ComplexF64)
+            @simd for n in 1:(2 * N)
+                rho_1 += U[i, n] * f[n] * conj(U[j + N, n])
+                rho_2 += U[j, n] * f[n] * conj(U[i + N, n])
+            end
+            P_ij = -rho_1 - rho_2
+            dx = dir == 1 ? 1 : 0
+            dy = dir == 1 ? 0 : 1
+            ph = link_phase(cache.magnetic, i, dx, dy)
+            delta_bond[i, dir] = state.Δ[i, dir] * ph
+            pair_bond[i, dir] = g_pair * P_ij * ph
+        end
+    end
+
+    return delta_bond, pair_bond
+end
+
 """
     ObservablesResult
 
