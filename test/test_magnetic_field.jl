@@ -88,3 +88,28 @@ end
         @test DwaveHMC.link_phase(mag, i, dx, dy) ≈ conj(DwaveHMC.link_phase(mag, j, -dx, -dy))
     end
 end
+
+@testset "Magnetic Hamiltonian hopping phases" begin
+    p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2, boundary_condition=:magnetic_pbc)
+    state = initialize_state(p)
+    cache = initialize_cache(p)
+    fill!(state.Δ, 0.0 + 0.0im)
+
+    init_static_H!(cache, p, state)
+    H = cache.H_base
+    Hfull = Matrix(Hermitian(H, :U))
+    N = p.N
+    i = site_index(p.Lx, 2, p.Lx)
+    jx = p.nn_table[i, 1]
+    jxpy = p.nnn_table[i, 1]
+    jxmy = p.nnn_table[i, 4]
+
+    ph_x = DwaveHMC.link_phase(cache.magnetic, i, 1, 0)
+    ph_xpy = DwaveHMC.link_phase(cache.magnetic, i, 1, 1)
+    ph_xmy = DwaveHMC.link_phase(cache.magnetic, i, 1, -1)
+    @test Hfull[i, jx] ≈ -p.t * ph_x
+    @test Hfull[i, jxpy] ≈ -p.tp * ph_xpy
+    @test Hfull[i, jxmy] ≈ -p.tp * ph_xmy
+    @test Hfull[i + N, jx + N] ≈ p.t * conj(ph_x)
+    @test Hfull ≈ Hfull'
+end

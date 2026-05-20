@@ -264,7 +264,7 @@ ComputeCache
 我们在程序开始时预分配所有大矩阵，
 后续计算全部使用 in-place 操作 (func!)，杜绝 calculation loop 中的 malloc。
 """
-mutable struct ComputeCache
+mutable struct ComputeCache{M<:AbstractMagneticCache}
     # BdG 哈密顿量矩阵
     # 维度 2N x 2N, Hermitian
     # 注意：Julia 中 Hermitian 只是一个 wrapper，底层数据还是存放在矩阵里
@@ -329,6 +329,7 @@ mutable struct ComputeCache
     mx_path_weights::Vector{Float64}
     xg_path_weights::Vector{Float64}
     omega_inv::Vector{Float64}
+    magnetic::M
 end
 
 function initialize_cache(p::ModelParameters)
@@ -395,6 +396,7 @@ function initialize_cache(p::ModelParameters)
     mx_path_weights = zeros(Float64, mx_path_len)
     xg_path_weights = zeros(Float64, xg_path_len)
     omega_inv = 1.0 ./ omega_grid
+    magnetic = build_magnetic_cache(p)
 
     return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, 
                         d_local_cache, Δ_backup, E_n_backup, U_backup,
@@ -404,5 +406,6 @@ function initialize_cache(p::ModelParameters)
                         u_pi_cache, u_pi_k_cache, fft_plan_y,
                         omega_grid, sigma_omega, dos_omega_grid,
                         dos_vals, dos_M_vals, ldos_ω0, ak_map, ak_mx_path, ak_xg_path,
-                        lor_cache, mx_path_weights, xg_path_weights, omega_inv)
+                        lor_cache, mx_path_weights, xg_path_weights, omega_inv,
+                        magnetic)
 end

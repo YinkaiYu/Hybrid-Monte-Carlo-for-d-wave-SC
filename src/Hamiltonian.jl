@@ -1,6 +1,26 @@
 using LinearAlgebra
 using LogExpFunctions
 
+@inline function set_hermitian_entry!(H::Matrix{ComplexF64}, row::Int, col::Int, val::ComplexF64)
+    if row <= col
+        H[row, col] = val
+    else
+        H[col, row] = conj(val)
+    end
+    return nothing
+end
+
+@inline function add_static_hopping!(H::Matrix{ComplexF64},
+                                     N::Int,
+                                     i::Int,
+                                     j::Int,
+                                     tij::Float64,
+                                     phase::ComplexF64)
+    set_hermitian_entry!(H, i, j, -tij * phase)
+    set_hermitian_entry!(H, i + N, j + N, tij * conj(phase))
+    return nothing
+end
+
 """
     init_static_H!(cache::ComputeCache, p::ModelParameters, state::SimulationState)
 
@@ -22,25 +42,12 @@ function init_static_H!(cache::ComputeCache, p::ModelParameters, state::Simulati
     end
     
     # 3. 动能项 (Hopping)
-    # 只填上三角
+    mag = cache.magnetic
     @inbounds for i in 1:N
-        # --- Nearest Neighbors ---
-        for dir in 1:4
-            j = p.nn_table[i, dir]
-            if j > i 
-                H[i, j] = -p.t
-                H[i+N, j+N] = p.t
-            end
-        end
-        
-        # --- Next Nearest Neighbors ---
-        for dir in 1:4
-            j = p.nnn_table[i, dir]
-            if j > i
-                H[i, j] = -p.tp
-                H[i+N, j+N] = p.tp
-            end
-        end
+        add_static_hopping!(H, N, i, p.nn_table[i, 1], p.t, link_phase(mag, i, 1, 0))
+        add_static_hopping!(H, N, i, p.nn_table[i, 2], p.t, link_phase(mag, i, 0, 1))
+        add_static_hopping!(H, N, i, p.nnn_table[i, 1], p.tp, link_phase(mag, i, 1, 1))
+        add_static_hopping!(H, N, i, p.nnn_table[i, 4], p.tp, link_phase(mag, i, 1, -1))
     end
     
     return nothing
