@@ -25,6 +25,10 @@ end
     @test DwaveHMC.link_phase(mag0, 1, 1, 0) == 1.0 + 0.0im
     @test DwaveHMC.link_phase(mag0, 1, 0, 1) == 1.0 + 0.0im
 
+    p0_magnetic_pbc = magnetic_test_parameters(boundary_condition=:magnetic_pbc)
+    mag0_magnetic_pbc = DwaveHMC.build_magnetic_cache(p0_magnetic_pbc)
+    @test mag0_magnetic_pbc isa DwaveHMC.NoFieldCache
+
     p_plus = magnetic_test_parameters(n_flux_sc=2, boundary_condition=:magnetic_pbc)
     mag_plus = DwaveHMC.build_magnetic_cache(p_plus)
     @test mag_plus isa DwaveHMC.LandauGaugeCache
@@ -39,7 +43,7 @@ end
     end
 
     p_alias = magnetic_test_parameters(n_vortices=-2, boundary_condition=:magnetic_pbc)
-    @test p_alias.n_flux_sc == -2
+    @test p_alias.n_vortices == p_alias.n_flux_sc == -2
 
     @test_throws ErrorException magnetic_test_parameters(n_flux_sc=1, boundary_condition=:magnetic_pbc)
     @test_throws ErrorException magnetic_test_parameters(n_flux_sc=2, boundary_condition=:periodic)

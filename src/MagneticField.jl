@@ -3,15 +3,7 @@
 end
 
 function validate_magnetic_field(p::ModelParameters)
-    if p.n_flux_sc == 0
-        p.boundary_condition in (:periodic, :magnetic_pbc) ||
-            error("boundary_condition must be :periodic or :magnetic_pbc")
-    else
-        p.boundary_condition === :magnetic_pbc ||
-            error("Finite n_flux_sc requires boundary_condition=:magnetic_pbc")
-        iseven(p.n_flux_sc) ||
-            error("magnetic PBC requires even n_flux_sc")
-    end
+    normalize_magnetic_field_inputs(p.n_flux_sc, nothing, p.boundary_condition)
     return nothing
 end
 

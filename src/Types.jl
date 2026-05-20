@@ -61,6 +61,8 @@ function Base.getproperty(p::ModelParameters, sym::Symbol)
         # Compatibility alias for older benchmark scripts. In this branch the
         # physical t-V coupling V is the quantity that maps to main-branch J.
         return getfield(p, :V)
+    elseif sym === :n_vortices
+        return getfield(p, :n_flux_sc)
     end
     return getfield(p, sym)
 end
@@ -98,19 +100,8 @@ function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool
     if has_target_n && !(0.0 <= target_n <= 2.0)
         error("target_n must be within [0, 2]")
     end
-    actual_n_flux_sc = n_vortices === nothing ? n_flux_sc : Int(n_vortices)
-    if n_vortices !== nothing && n_flux_sc != 0 && n_flux_sc != actual_n_flux_sc
-        error("n_flux_sc and n_vortices must match when both are provided")
-    end
-    if actual_n_flux_sc == 0
-        boundary_condition in (:periodic, :magnetic_pbc) ||
-            error("boundary_condition must be :periodic or :magnetic_pbc")
-    else
-        boundary_condition === :magnetic_pbc ||
-            error("Finite n_flux_sc requires boundary_condition=:magnetic_pbc")
-        iseven(actual_n_flux_sc) ||
-            error("magnetic PBC requires even n_flux_sc")
-    end
+    actual_n_flux_sc, actual_boundary_condition =
+        normalize_magnetic_field_inputs(n_flux_sc, n_vortices, boundary_condition)
 
     N = Lx * Ly
     # 初始化邻居表
@@ -154,7 +145,7 @@ function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool
         Float64(μ_tune_gain), Int(μ_tune_interval), Float64(μ_tune_step_max), Float64(μ_tune_tol),
         Float64(μ_min), Float64(μ_max),
         nn_table, nnn_table,
-        Int(actual_n_flux_sc), Symbol(boundary_condition),
+        Int(actual_n_flux_sc), Symbol(actual_boundary_condition),
         Float64(η), Float64(ω_min), Float64(ω_max), Float64(Δω), n_ω)
 end
 
