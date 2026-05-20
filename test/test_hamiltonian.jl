@@ -3,7 +3,7 @@ using LinearAlgebra
 using BenchmarkTools
 
 Lx, Ly = 6, 6
-p = ModelParameters(Lx, Ly, 1.0, -0.35, -0.5, 1.0, 0.1, 10.0, 1.0, 0.05, 1.0)
+p = ModelParameters(Lx, Ly, 1.0, -0.35, -0.5, 1.0, 0.1, 10.0, 1.0, 1.0)
 s = initialize_state(p)
 c = initialize_cache(p)
 println("System Size: $(p.N) sites, Matrix Dim: $(2*p.N)")
