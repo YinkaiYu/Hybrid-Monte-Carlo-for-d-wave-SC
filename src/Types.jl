@@ -45,6 +45,9 @@ struct ModelParameters
     nn_table::Matrix{Int}  # Nearest Neighbors (4个方向)
     nnn_table::Matrix{Int} # Next Nearest Neighbors (4个方向)
 
+    n_flux_sc::Int
+    boundary_condition::Symbol
+
     # 光谱与输运计算参数
     η::Float64          # 展宽因子 (Broadening)
     ω_min::Float64      # 光电导频率下限
@@ -76,7 +79,10 @@ function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool
                                  μ_tune_gain::Float64, μ_tune_interval::Int, μ_tune_step_max::Float64,
                                  μ_tune_tol::Float64,
                                  μ_min::Float64, μ_max::Float64,
-                                 η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0)
+                                 η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0,
+                                 n_flux_sc::Int=0,
+                                 n_vortices::Union{Nothing,Int}=nothing,
+                                 boundary_condition::Symbol=:periodic)
     if μ_tune_interval <= 0
         error("μ_tune_interval must be > 0")
     end
@@ -91,6 +97,19 @@ function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool
     end
     if has_target_n && !(0.0 <= target_n <= 2.0)
         error("target_n must be within [0, 2]")
+    end
+    actual_n_flux_sc = n_vortices === nothing ? n_flux_sc : Int(n_vortices)
+    if n_vortices !== nothing && n_flux_sc != 0 && n_flux_sc != actual_n_flux_sc
+        error("n_flux_sc and n_vortices must match when both are provided")
+    end
+    if actual_n_flux_sc == 0
+        boundary_condition in (:periodic, :magnetic_pbc) ||
+            error("boundary_condition must be :periodic or :magnetic_pbc")
+    else
+        boundary_condition === :magnetic_pbc ||
+            error("Finite n_flux_sc requires boundary_condition=:magnetic_pbc")
+        iseven(actual_n_flux_sc) ||
+            error("magnetic PBC requires even n_flux_sc")
     end
 
     N = Lx * Ly
@@ -135,12 +154,16 @@ function _build_model_parameters(Lx::Int, Ly::Int, t, tp, μ, has_target_n::Bool
         Float64(μ_tune_gain), Int(μ_tune_interval), Float64(μ_tune_step_max), Float64(μ_tune_tol),
         Float64(μ_min), Float64(μ_max),
         nn_table, nnn_table,
+        Int(actual_n_flux_sc), Symbol(boundary_condition),
         Float64(η), Float64(ω_min), Float64(ω_max), Float64(Δω), n_ω)
 end
 
 # 兼容旧接口：显式固定 μ
 function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, V, mass;
                          η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0,
+                         n_flux_sc::Int=0,
+                         n_vortices::Union{Nothing,Int}=nothing,
+                         boundary_condition::Symbol=:periodic,
                          μ_tune_gain::Float64=0.50, μ_tune_interval::Int=1,
                          μ_tune_step_max::Float64=0.08, μ_tune_tol::Float64=0.005,
                          μ_min::Float64=-4.0, μ_max::Float64=4.0)
@@ -148,7 +171,10 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, μ, W, n_imp, β, V, mass;
                                    μ_tune_gain=μ_tune_gain, μ_tune_interval=μ_tune_interval,
                                    μ_tune_step_max=μ_tune_step_max, μ_tune_tol=μ_tune_tol,
                                    μ_min=μ_min, μ_max=μ_max,
-                                   η=η, Δω=Δω, ω_max=ω_max)
+                                   η=η, Δω=Δω, ω_max=ω_max,
+                                   n_flux_sc=n_flux_sc,
+                                   n_vortices=n_vortices,
+                                   boundary_condition=boundary_condition)
 end
 
 # 新接口：μ 与 target_n 二选一
@@ -156,6 +182,9 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, W, n_imp, β, V, mass;
                          μ::Union{Nothing,Real}=nothing, target_n::Union{Nothing,Real}=nothing,
                          μ_init::Real=0.0,
                          η::Float64=0.01, Δω::Float64=0.002, ω_max::Float64=4.0,
+                         n_flux_sc::Int=0,
+                         n_vortices::Union{Nothing,Int}=nothing,
+                         boundary_condition::Symbol=:periodic,
                          μ_tune_gain::Float64=0.50, μ_tune_interval::Int=1,
                          μ_tune_step_max::Float64=0.08, μ_tune_tol::Float64=0.005,
                          μ_min::Float64=-4.0, μ_max::Float64=4.0)
@@ -171,7 +200,10 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, W, n_imp, β, V, mass;
                                        μ_tune_gain=μ_tune_gain, μ_tune_interval=μ_tune_interval,
                                        μ_tune_step_max=μ_tune_step_max, μ_tune_tol=μ_tune_tol,
                                        μ_min=μ_min, μ_max=μ_max,
-                                       η=η, Δω=Δω, ω_max=ω_max)
+                                       η=η, Δω=Δω, ω_max=ω_max,
+                                       n_flux_sc=n_flux_sc,
+                                       n_vortices=n_vortices,
+                                       boundary_condition=boundary_condition)
     end
 
     μ_val = Float64(μ_init)
@@ -179,7 +211,10 @@ function ModelParameters(Lx::Int, Ly::Int, t, tp, W, n_imp, β, V, mass;
                                    μ_tune_gain=μ_tune_gain, μ_tune_interval=μ_tune_interval,
                                    μ_tune_step_max=μ_tune_step_max, μ_tune_tol=μ_tune_tol,
                                    μ_min=μ_min, μ_max=μ_max,
-                                   η=η, Δω=Δω, ω_max=ω_max)
+                                   η=η, Δω=Δω, ω_max=ω_max,
+                                   n_flux_sc=n_flux_sc,
+                                   n_vortices=n_vortices,
+                                   boundary_condition=boundary_condition)
 end
 
 # ---------------------------------------------------------

@@ -1,6 +1,7 @@
 using Test
 
 @testset "DwaveHMC default test suite" begin
+    include("test_magnetic_field.jl")
     include("test_core_smoke.jl")
     include("test_pairing_convention.jl")
     include("test_twist_stiffness.jl")

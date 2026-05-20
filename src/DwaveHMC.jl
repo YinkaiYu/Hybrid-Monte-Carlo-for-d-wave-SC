@@ -10,7 +10,9 @@ export measure_observables, measure_transport_and_spectra, measure_twisted_spect
 export run_simulation, calc_optimal_dt
 
 include("MultiEta.jl")
+include("MagneticFieldTypes.jl")
 include("Types.jl")
+include("MagneticField.jl")
 include("Hamiltonian.jl")
 include("Observables.jl")
 include("TwistedSpectra.jl")
