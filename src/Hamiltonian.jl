@@ -142,6 +142,8 @@ function build_twisted_H_BdG!(H::Matrix{ComplexF64},
                               p::ModelParameters,
                               state::SimulationState,
                               Ax::Float64)
+    p.n_flux_sc == 0 ||
+        error("build_twisted_H_BdG! is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
     N = p.N
     fill!(H, 0.0 + 0.0im)
 
@@ -275,6 +277,8 @@ function build_twisted_H_BdG_qy!(H::Matrix{ComplexF64},
                                  Ax::Float64,
                                  qy::Float64,
                                  phase_shift::Float64)
+    p.n_flux_sc == 0 ||
+        error("build_twisted_H_BdG_qy! is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
     N = p.N
     fill!(H, 0.0 + 0.0im)
 

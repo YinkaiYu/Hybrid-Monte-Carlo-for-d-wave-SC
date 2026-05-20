@@ -174,6 +174,19 @@ end
     end
 end
 
+@testset "Production Kubo current uses finite-field Nambu phases" begin
+    p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2, boundary_condition=:magnetic_pbc)
+    state = random_finite_field_state(p)
+    cache = initialize_cache(p)
+    init_static_H!(cache, p, state)
+    update_H_BdG!(cache, p, state)
+
+    J_prod = Matrix(DwaveHMC.current_operator_matrix(cache, p; qx=0.0, qy=0.0))
+    J_probe = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p; qx=0.0, qy=0.0))
+
+    @test J_prod ≈ -J_probe atol=1.0e-12 rtol=1.0e-12
+end
+
 @testset "Finite-field transport is finite and diagnostic curvature is available" begin
     p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2, boundary_condition=:magnetic_pbc)
     state = random_finite_field_state(p)

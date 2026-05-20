@@ -220,6 +220,8 @@ function measure_twist_stiffness(cache::ComputeCache,
     if Ax <= 0
         error("Ax must be positive")
     end
+    p.n_flux_sc == 0 ||
+        error("measure_twist_stiffness is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
 
     S0 = fermion_logdet_action_from_eigs(cache.E_n, p.β)
     H_twist = zeros(ComplexF64, 2 * p.N, 2 * p.N)
@@ -305,6 +307,8 @@ function measure_twist_stiffness_qy(cache::ComputeCache,
     if Ax <= 0
         error("Ax must be positive")
     end
+    p.n_flux_sc == 0 ||
+        error("measure_twist_stiffness_qy is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
 
     S0 = fermion_logdet_action_from_eigs(cache.E_n, p.β)
     H_twist = zeros(ComplexF64, 2 * p.N, 2 * p.N)
@@ -661,10 +665,12 @@ end
     u = link_phase(cache.magnetic, i, dx, dy)
     val = im * tij * phase_q * u
     val_rev = -im * tij * phase_q * conj(u)
+    val_hole = im * tij * phase_q * conj(u)
+    val_hole_rev = -im * tij * phase_q * u
     add_sparse_current_pair!(I_idx, J_idx, V_val, i, j, val)
     add_sparse_current_pair!(I_idx, J_idx, V_val, j, i, val_rev)
-    add_sparse_current_pair!(I_idx, J_idx, V_val, i + N, j + N, val)
-    add_sparse_current_pair!(I_idx, J_idx, V_val, j + N, i + N, val_rev)
+    add_sparse_current_pair!(I_idx, J_idx, V_val, i + N, j + N, val_hole)
+    add_sparse_current_pair!(I_idx, J_idx, V_val, j + N, i + N, val_hole_rev)
     return nothing
 end
 

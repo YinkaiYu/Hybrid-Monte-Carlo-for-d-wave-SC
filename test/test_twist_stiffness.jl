@@ -56,6 +56,22 @@ function manual_kubo_qy_skip_diagonal(cache::ComputeCache, p::ModelParameters)
     return val_dia - Lambda_xx / N
 end
 
+@testset "Finite magnetic field rejects direct twist stiffness diagnostics" begin
+    p = ModelParameters(4, 4, 1.0, -0.35, -0.5, 0.0, 0.0, 8.0, 1.0, 1.0;
+                        n_flux_sc=2,
+                        boundary_condition=:magnetic_pbc)
+    state = initialize_state(p)
+    cache = initialize_cache(p)
+    init_static_H!(cache, p, state)
+    update_H_BdG!(cache, p, state)
+    diagonalize_H_BdG!(cache, p)
+
+    @test_throws ErrorException DwaveHMC.measure_twist_stiffness(cache, p, state; Ax=1.0e-3)
+    @test_throws ErrorException DwaveHMC.measure_twist_stiffness_qy(cache, p, state;
+                                                                    Ax=1.0e-3,
+                                                                    qy=2π / p.Ly)
+end
+
 @testset "Twist stiffness estimator" begin
     @test !(:H_twist_base in fieldnames(ComputeCache))
     @test !(:H_twist_work in fieldnames(ComputeCache))
