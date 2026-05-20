@@ -28,7 +28,7 @@ Implement:
 - Kubo-Greenwood `DC_Conductivity` as longitudinal `sigma_xx` at `q=0`;
 - optional gauge-covariant bond pairing output for finite-field analysis;
 - finite-field-safe spectra behavior that keeps DOS and LDOS but disables
-  ordinary FFT momentum spectra by default.
+  ordinary FFT momentum spectra and M-point projected spectra by default.
 
 Do not implement yet:
 
@@ -154,9 +154,24 @@ U_{dx,dy}(x,y) = cis(plaquette_phase * dy * (x + dx/2))
 ```
 
 for `dx = +/-1` and `dy = +/-1`, before applying any magnetic boundary patch.
-Boundary-crossing diagonal hops must use the same magnetic boundary patch as
-nearest-neighbor hops, so `+x`, `+x+y`, and `+x-y` remain mutually consistent
-at the torus edge.
+
+Boundary-crossing diagonal hops must be defined by one complete algorithm,
+rather than a phrase such as "use the same patch." For a directed link from
+zero-based `(x,y)` to the unwrapped endpoint `(x + dx, y + dy)`, define
+
+```text
+wx = floor((x + dx) / Lx)  # -1, 0, or +1 for first-version bonds
+y_end = y + dy
+U_raw = cis(plaquette_phase * dy * (x + dx/2))
+U_patch = cis(-plaquette_phase * wx * Lx * y_end)
+U_link = U_raw * U_patch
+```
+
+No `y` boundary patch is needed in this Landau gauge. For the `+x` boundary
+link this reduces to `cis(-plaquette_phase * Lx * y)`. For `+x+y` and `+x-y`
+links crossing the `x` seam, the patch is evaluated at the unwrapped endpoint
+`y + dy`, which removes the ambiguity between using `y`, `y + 1/2`, or
+`y + dy`.
 
 For the first version the common directed bonds are:
 
@@ -184,6 +199,23 @@ Apply Peierls phases to:
 - nearest-neighbor normal hopping on `+x` and `+y` unique directed bonds;
 - next-nearest-neighbor normal hopping on `+x+y` and `+x-y` unique directed
   bonds.
+
+The old zero-field pattern
+
+```julia
+for dir in 1:4
+    j = neighbor_table[i, dir]
+    if j > i
+        ...
+    end
+end
+```
+
+must not be reused for finite-field hopping. Peierls phases are directed, and
+`j > i` can silently choose the wrong direction at magnetic seams. Hamiltonian
+construction should iterate the unique directed bonds `+x`, `+y`, `+x+y`, and
+`+x-y`, then let a helper such as `add_hopping!(...)` fill the Hermitian BdG
+blocks.
 
 The pairing block remains the sampled auxiliary field:
 
@@ -223,31 +255,44 @@ d_local
 They remain based on the old bare `Delta_x - Delta_y` or `P_x - P_y`
 convention and are not overwritten by gauge-covariant definitions.
 
+For finite-field files, metadata must state that these legacy scalar pairing
+fields are gauge-fixed diagnostics:
+
+```text
+pairing_scalar_convention = "bare Landau-gauge diagnostic"
+pairing_scalar_gauge_invariant = false
+```
+
 Add an optional run-simulation keyword:
 
 ```julia
-write_gauge_pair_bonds::Bool = false
+write_gauge_pair_bonds_freq::Int = 0
 ```
 
-When enabled, `pairing_scatter.jld2` writes for each measured sweep:
+`0` means disabled; a positive value writes every `write_gauge_pair_bonds_freq`
+measurement sweeps. This avoids writing large `N x 2` complex arrays at every
+measurement by accident.
+
+When enabled, `pairing_scatter.jld2` writes:
 
 ```text
-delta_bond_gauge :: N x 2 ComplexF64
-pair_bond_gauge  :: N x 2 ComplexF64
+delta_bond_landau_gauge_covariant :: N x 2 ComplexF64
+pair_bond_landau_gauge_covariant  :: N x 2 ComplexF64
 ```
 
 Definitions:
 
 ```text
-delta_bond_gauge[i,dir] = state.Delta[i,dir] * U_link(i,dir)
-pair_bond_gauge[i,dir]  = g_pair * P[i,dir] * U_link(i,dir)
+delta_bond_landau_gauge_covariant[i,dir] = state.Delta[i,dir] * U_link(i,dir)
+pair_bond_landau_gauge_covariant[i,dir]  = g_pair * P[i,dir] * U_link(i,dir)
 ```
 
 Finite-field vortex, local pairing, and gauge-covariant d-wave post-processing
-should primarily use `pair_bond_gauge`, because it is the fermionic pair
-expectation and therefore the more physical pairing observable. The auxiliary
-field `delta_bond_gauge` is useful for HMC field inspection, self-consistency
-debugging, and comparing sampled fields with fermionic expectation values.
+should primarily use `pair_bond_landau_gauge_covariant`, because it is the
+fermionic pair expectation and therefore the more physical pairing observable.
+The auxiliary field `delta_bond_landau_gauge_covariant` is useful for HMC field
+inspection, self-consistency debugging, and comparing sampled fields with
+fermionic expectation values.
 
 Site-level gauge-covariant d-wave pairing is intentionally left to
 post-processing:
@@ -257,7 +302,13 @@ d_i = 1/4 * (Delta^g_{i,+x} + Delta^g_{i,-x}
              - Delta^g_{i,+y} - Delta^g_{i,-y})
 ```
 
-The same formula can be applied to `pair_bond_gauge`.
+The same formula can be applied to `pair_bond_landau_gauge_covariant`.
+
+The first implementation does not need to add site-averaged gauge-covariant
+pairing scalars to the main CSV output. Those can be computed in post-processing
+from the bond arrays when the arrays are explicitly written. If later added,
+they must use names that distinguish auxiliary-field and fermionic-pair
+definitions and must not replace the legacy zero-field-compatible columns.
 
 ## Kubo Stiffness and Conductivity
 
@@ -273,6 +324,19 @@ The current/vector-potential direction is `x`; the probe momentum is transverse
 to the current direction. Strict `m == n` terms are skipped as in the existing
 finite-`q_y` stiffness path, while near-degenerate `m != n` terms use the
 stable derivative limit.
+
+This production observable is the finite-field continuation of the existing
+zero-field transverse Kubo estimator. It should not be described as the full
+thermodynamic curvature of an arbitrary probe unless a separate diagnostic
+includes the diagonal occupation-response term and is benchmarked against a
+free-energy finite difference.
+
+Finite-field `Superfluid_Stiffness` is also not a BKT transition-temperature
+criterion. In a perpendicular magnetic field there are field-induced vortices,
+so the zero-field BKT universal-jump relation should not be used as
+`D_s(B,T_c)=2T_c/pi`. It is a field-suppressed stiffness diagnostic that can be
+used to locate where `D_s(B,T,L)` is driven close to zero at fixed `T` or where
+`D_s(B,T,L)` vanishes as a function of `T` on finite systems.
 
 `DC_Conductivity` remains the regular longitudinal Kubo-Greenwood
 conductivity:
@@ -291,6 +355,26 @@ Both quantities must include Peierls phases consistently:
 `current_operator_matrix` or its replacement should obtain bond phases only
 from `link_phase`. The diamagnetic loop should use the same bond list and the
 same phases so Hamiltonian, current, and kinetic response cannot drift apart.
+
+Analytic current and diamagnetic operators must be defined as derivatives of
+the same finite-field BdG Hamiltonian used for sampling:
+
+```text
+J_eta = d H_BdG[A_B + lambda eta] / d lambda |_{lambda=0}
+K_eta = d^2 H_BdG[A_B + lambda eta] / d lambda^2 |_{lambda=0}
+```
+
+The implementation may still use sparse analytic operators for performance,
+but the signs, Nambu blocks, and `t'` probe phases must be verified against
+finite differences of `H_BdG`. A hand-built Nambu `blockdiag(...)` current is
+not accepted unless it passes these derivative tests.
+
+`DC_Conductivity` is `sigma_xx_regular`, the regular longitudinal conductivity
+without the superconducting delta-function part. Because Hall conductivity is
+out of scope, finite-field analysis must not identify the physical longitudinal
+resistivity as `1 / sigma_xx` unless `sigma_xy` is independently shown to be
+negligible. If scripts provide an inverse for plotting, it should be named as an
+`inverse_sigma_xx_proxy`, not as physical `rho_xx`.
 
 ## Spectra Behavior at Finite Field
 
@@ -326,9 +410,11 @@ Default finite-field behavior:
 - compute and write DOS;
 - compute and write LDOS;
 - compute and write transport scalars and optical conductivity;
-- do not write `A_k0`, `A_MX_path`, or `A_XG_path`;
+- do not write `dos_M`, `A_k0`, `A_MX_path`, or `A_XG_path`;
 - post-processing scripts treat momentum-resolved arrays as optional and skip
   the corresponding CSV outputs when absent.
+- do not write fake zero arrays for omitted momentum spectra, because that can
+  be misread as a physical absence of spectral weight.
 
 If a future or script-level option explicitly requests ordinary FFT spectra at
 `n_flux_sc != 0` without `allow_gauge_dependent_spectra=true`, throw an error
@@ -339,6 +425,7 @@ names, for example:
 
 ```text
 A_k_omega0_landau_gauge_diagnostic
+dos_M_landau_gauge_diagnostic
 A_MX_path_landau_gauge_diagnostic
 A_XG_path_landau_gauge_diagnostic
 ```
@@ -357,7 +444,7 @@ spectra_interpretation =
 `run_simulation` gains:
 
 ```julia
-write_gauge_pair_bonds::Bool = false
+write_gauge_pair_bonds_freq::Int = 0
 allow_gauge_dependent_spectra::Bool = false
 ```
 
@@ -373,10 +460,16 @@ magnetic_pbc
 gauge_dependent_spectra
 spectra_gauge
 spectra_interpretation
+pairing_scalar_convention
+pairing_scalar_gauge_invariant
+conductivity_convention
 ```
 
 `projectHPC/run_conf.jl` should pass magnetic parameters from `params.jl` and
 print them in `job.out` near the existing spectra/twist settings.
+Batch output directory names and job tags should include a compact magnetic
+field marker such as `Nv${n_flux_sc}` so finite-field scans cannot overwrite or
+mix with zero-field results.
 
 Defaults preserve existing zero-field behavior:
 
@@ -388,6 +481,8 @@ Defaults preserve existing zero-field behavior:
 Finite-field runs should avoid large additional allocations in hot loops:
 
 - build magnetic phase cache once in `initialize_cache(p)`;
+- avoid abstract dynamic dispatch in inner loops; either use type-stable cache
+  access or read precomputed `U_x`, `U_y`, `U_xpy`, and `U_xmy` arrays directly;
 - reuse existing dense/sparse buffers for Kubo work;
 - keep gauge-covariant bond output disabled by default because it adds
   `N x 2` complex arrays per measured sweep;
@@ -408,6 +503,12 @@ Magnetic phase tests:
 - each plaquette phase product is `cis(plaquette_phase)`;
 - torus closure gives total phase `cis(pi * n_flux_sc) == 1`;
 - phases for `+B` and `-B` are complex conjugates.
+- `link_phase(i, dx, dy) == conj(link_phase(j, -dx, -dy))` for the endpoint
+  `j = i + (dx,dy)`;
+- diagonal `+x+y` and `+x-y` links crossing the `x` seam match the documented
+  endpoint-patch formula;
+- non-contractible loop products are consistent with the enclosed plaquette
+  flux and the magnetic boundary patch.
 
 Hamiltonian and HMC tests:
 
@@ -422,6 +523,15 @@ Kubo tests:
 - current operator entries for `+x`, `+x+y`, and `+x-y` bonds match
   `link_phase`;
 - diamagnetic term uses the same phases as the current operator;
+- analytic current operator matches
+  `(H[A_B + eps eta] - H[A_B - eps eta]) / (2eps)` on small random complex
+  configurations;
+- analytic diamagnetic operator matches
+  `(H[A_B + eps eta] + H[A_B - eps eta] - 2H[A_B]) / eps^2`;
+- a small-system finite-field Kubo diagnostic is benchmarked against
+  free-energy finite-difference curvature, with the diagonal occupation
+  response included in the curvature diagnostic rather than in the production
+  finite-`q_y` `Superfluid_Stiffness` column;
 - `Superfluid_Stiffness` and `DC_Conductivity` are finite and real for small
   `n_flux_sc = +/-2` smoke tests.
 
@@ -429,12 +539,14 @@ Output/fail-fast tests:
 
 - finite field plus `use_twisted_spectra=true` errors;
 - finite field plus `measure_twist=true` errors;
-- finite field default output omits ordinary `A_k0`, `A_MX_path`, `A_XG_path`;
+- finite field default output omits ordinary `dos_M`, `A_k0`, `A_MX_path`,
+  `A_XG_path`;
 - diagnostic opt-in writes Landau-gauge warning field names and metadata;
-- `write_gauge_pair_bonds=true` writes both `delta_bond_gauge` and
-  `pair_bond_gauge`;
-- post-processing handles missing momentum spectra and still writes DOS, LDOS,
-  transport, and DC outputs.
+- `write_gauge_pair_bonds_freq > 0` writes both
+  `delta_bond_landau_gauge_covariant` and
+  `pair_bond_landau_gauge_covariant` at the requested frequency;
+- post-processing handles missing `dos_M` and momentum spectra and still writes
+  DOS, LDOS, transport, and DC outputs.
 
 ## Documentation Plan
 
@@ -454,10 +566,27 @@ The documentation must clearly state:
 - negative `n_flux_sc` reverses the field direction;
 - `flux_density_sc` and `plaquette_phase` are derived quantities;
 - exact Landau-gauge link convention;
+- finite-field stiffness is a field-suppressed transverse response diagnostic,
+  not a direct BKT universal-jump transition criterion;
 - the BdG pairing block uses bare sampled `Delta_ij`;
 - gauge-covariant bond pairing is constructed only for observables/output;
+- legacy finite-field scalar pairing columns are bare Landau-gauge diagnostics;
+- `DC_Conductivity` is `sigma_xx_regular`; `1 / sigma_xx` is only a proxy
+  unless Hall response is known to be negligible;
 - finite-field ordinary FFT `A(k,omega)` is disabled by default and diagnostic
   only if explicitly enabled.
+
+## Finite-Field Thermalization Notes
+
+Low-temperature finite-field HMC can thermalize slowly because vortex positions,
+phase winding, and disorder pinning introduce additional long-lived structure.
+The first implementation does not add a full vortex-seeded initializer, but the
+documentation should warn production users to validate thermalization before
+large scans. Recommended practice is to run small `N_conf=1` pilots, inspect
+acceptance and pairing/vortex diagnostics, and consider warm starts or annealing
+paths such as high-temperature to low-temperature or `B=0` to finite `B`.
+Vortex-seeded initialization is a follow-up extension point if random starts are
+too slow at the target low temperatures.
 
 ## Open Extension Points
 
@@ -467,7 +596,8 @@ The phase-layer API is designed so future work can add:
 - `yy` stiffness and conductivity;
 - Hall conductivity and Onsager checks;
 - cylinder/open boundary geometry with continuous `flux_density_sc`;
-- magnetic unit cell and magnetic Bloch spectra.
+- magnetic unit cell and magnetic Bloch spectra;
+- vortex-seeded or annealed finite-field initial states.
 
 Those extensions should build on `link_phase` or replace it with a bond-table
 lookup without changing Hamiltonian, Kubo, and pairing-observable call sites.
