@@ -38,6 +38,10 @@ $$
 
 这里的 BdG 非对角块直接是 $\Delta$，没有额外的 $1/2$。
 
+## 有限磁场约定
+
+有限轨道磁场的完整约定见 [magnetic-field.md](magnetic-field.md)。当前第一版只支持 torus magnetic PBC；磁场通过 normal hopping 的 Peierls phase 进入 $h$，而 BdG pairing block 仍直接使用裸的 $\Delta_{ij}$，不额外乘 Peierls 相位。
+
 ## 辅助场权重
 
 当前程序的经典场权重为

@@ -106,6 +106,8 @@ $$
 $$
 这里 $T$ 表示 transverse response。做论文级有限尺寸分析时，应以这个量为准，并在需要时随 $L_y$ 做 $q_y\to0$ 外推。
 
+有限轨道磁场下，`Superfluid_Stiffness` 仍是同一个 transverse `xx` Meissner estimator，而不是零场 BKT universal jump 的 $T_c$ 判据。有限磁场配对输出和谱函数输出的规范约定见 [magnetic-field.md](magnetic-field.md)。
+
 ### Twist 自由能差分 benchmark
 
 除了正式 Kubo 公式，也可以对 Peierls twist 后的 BdG 自由能做有限差分，作为数值 benchmark。这个测量需要额外对角化，生产运行中默认不打开；在 `run_simulation` 中需显式设置 `measure_twist=true`。
@@ -188,6 +190,8 @@ $$ \text{Re}\,\sigma_{xx}(\omega) = \frac{\pi}{N \omega} \sum_{n\ne m}^{2N} (f(E
 取直流极限为（Kubo–Greenwood公式）：
 $$ \sigma_{\text{DC}}=\text{Re}\,\sigma_{xx}(\omega\to0)=\frac{\pi}{N} \sum_{n\ne m}^{2N} \left( -f'(E_n) \right) |J^x_{nm}(0)|^2 \delta(E_m - E_n) $$
 其中 $-f'(E_n) =\beta f(E_n) [1 - f(E_n)]$ 。注意这只包含了 regular part，没有包含超流导致的发散项 $\pi \rho_s \delta(\omega)$ 。
+
+有限磁场下，`DC_Conductivity` 仍表示 regular $\sigma_{xx}$。当前第一版没有 Hall conductivity，因此不能把 `1 / DC_Conductivity` 解释或命名为物理的 longitudinal resistivity $\rho_{xx}$；它至多是一个经验 proxy。
 
 数值上取 $\delta$ 函数为：
 $$ \delta(E) = \frac{1}{\pi} \frac{\eta}{E^2 + \eta^2} $$
