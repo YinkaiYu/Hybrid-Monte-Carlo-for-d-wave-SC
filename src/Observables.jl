@@ -462,66 +462,114 @@ end
 # 1. 初始化辅助工具
 # ------------------------------------------------
 
+@inline function probe_weight(cache::ComputeCache, i::Int, qx::Float64, qy::Float64)
+    x = cache.x_idx[i] - 1
+    y = cache.y_idx[i] - 1
+    θ = qx * x + qy * y
+    return (qx == 0.0 && qy == 0.0) ? 1.0 : sqrt(2.0) * cos(θ)
+end
+
+@inline function add_sparse_hermitian_pair!(I_idx::Vector{Int},
+                                            J_idx::Vector{Int},
+                                            V_val::Vector{ComplexF64},
+                                            row::Int,
+                                            col::Int,
+                                            val::ComplexF64)
+    push!(I_idx, row); push!(J_idx, col); push!(V_val, val)
+    push!(I_idx, col); push!(J_idx, row); push!(V_val, conj(val))
+    return nothing
+end
+
+@inline function add_current_derivative_bond!(I_idx::Vector{Int},
+                                              J_idx::Vector{Int},
+                                              V_val::Vector{ComplexF64},
+                                              cache::ComputeCache,
+                                              N::Int,
+                                              i::Int,
+                                              j::Int,
+                                              tij::Float64,
+                                              dx::Int,
+                                              dy::Int,
+                                              qx::Float64,
+                                              qy::Float64)
+    η = probe_weight(cache, i, qx, qy)
+    u = link_phase(cache.magnetic, i, dx, dy)
+    d1 = -im * tij * η * u
+    add_sparse_hermitian_pair!(I_idx, J_idx, V_val, i, j, d1)
+    add_sparse_hermitian_pair!(I_idx, J_idx, V_val, i + N, j + N, -conj(d1))
+    return nothing
+end
+
 function current_operator_matrix(cache::ComputeCache,
                                  p::ModelParameters;
                                  qx::Float64=0.0,
                                  qy::Float64=0.0)
     N = p.N
-    x_idx = cache.x_idx
-    y_idx = cache.y_idx
-    # 使用 Triplet 格式构建稀疏矩阵 (I, J, V)
     I_idx = Int[]
     J_idx = Int[]
     V_val = ComplexF64[]
-    
-    # 辅助函数：添加项 c^dag_u c_v 的系数 val
-    # 即 matrix[u, v] += val
-    function add_term!(u, v, val)
-        push!(I_idx, u); push!(J_idx, v); push!(V_val, val)
-    end
-    
-    # 遍历所有格点构建 Particle block (N x N)
-    @inbounds for i in 1:N
-        # 将 i 转换为 (x, y) 坐标，1-based
-        phase = cis(qx * (x_idx[i] - 1) + qy * (y_idx[i] - 1))
+    sizehint!(I_idx, 12 * N)
+    sizehint!(J_idx, 12 * N)
+    sizehint!(V_val, 12 * N)
 
-        # +x neighbor (Nearest Neighbor)
-        j_x = p.nn_table[i, 1] 
-        # Term: i * t * (c^dag_i c_j - c^dag_j c_i) * phase
-        val = im * p.t * phase
-        add_term!(i, j_x, val)       # <i|J|j>
-        add_term!(j_x, i, -val)      # <j|J|i>
-        
-        # +x+y (dir=1 in nnn)
-        j_xpy = p.nnn_table[i, 1]
-        val_tp = im * p.tp * phase
-        add_term!(i, j_xpy, val_tp)
-        add_term!(j_xpy, i, -val_tp)
-        
-        # +x-y (dir=4 in nnn, neighbor of i is i+x-y)
-        # 注意: nnn_table 定义: 1:+x+y, 2:-x+y, 3:-x-y, 4:+x-y
-        j_xmy = p.nnn_table[i, 4] 
-        val_tp = im * p.tp * phase
-        add_term!(i, j_xmy, val_tp)
-        add_term!(j_xmy, i, -val_tp)
+    @inbounds for i in 1:N
+        add_current_derivative_bond!(I_idx, J_idx, V_val, cache, N,
+                                     i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
+        add_current_derivative_bond!(I_idx, J_idx, V_val, cache, N,
+                                     i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
+        add_current_derivative_bond!(I_idx, J_idx, V_val, cache, N,
+                                     i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
     end
-    
-    # 构建 N x N 稀疏矩阵
-    Jx_part = sparse(I_idx, J_idx, V_val, N, N)
-    
-    # 构建完整的 2N x 2N Nambu 矩阵
-    # J_BdG = [ Jx_part   0       ]
-    #         [ 0         Jx_part ]
-    return blockdiag(Jx_part, Jx_part)
+
+    return sparse(I_idx, J_idx, V_val, 2 * N, 2 * N)
+end
+
+@inline function add_dense_hermitian_pair!(M::Matrix{ComplexF64},
+                                           row::Int,
+                                           col::Int,
+                                           val::ComplexF64)
+    M[row, col] = val
+    M[col, row] = conj(val)
+    return nothing
+end
+
+@inline function add_diamagnetic_bond!(K::Matrix{ComplexF64},
+                                       cache::ComputeCache,
+                                       N::Int,
+                                       i::Int,
+                                       j::Int,
+                                       tij::Float64,
+                                       dx::Int,
+                                       dy::Int,
+                                       qx::Float64,
+                                       qy::Float64)
+    η = probe_weight(cache, i, qx, qy)
+    u = link_phase(cache.magnetic, i, dx, dy)
+    d2 = tij * η^2 * u
+    add_dense_hermitian_pair!(K, i, j, d2)
+    add_dense_hermitian_pair!(K, i + N, j + N, -conj(d2))
+    return nothing
+end
+
+function diamagnetic_operator_matrix(cache::ComputeCache,
+                                     p::ModelParameters;
+                                     qx::Float64=0.0,
+                                     qy::Float64=0.0)
+    N = p.N
+    K = zeros(ComplexF64, 2 * N, 2 * N)
+    @inbounds for i in 1:N
+        add_diamagnetic_bond!(K, cache, N, i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
+        add_diamagnetic_bond!(K, cache, N, i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
+        add_diamagnetic_bond!(K, cache, N, i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
+    end
+    return K
 end
 
 """
     build_current_operator!(cache::ComputeCache, p::ModelParameters; qx=0.0, qy=0.0, store=:q0)
 
-构建 x 方向电流算符的稀疏矩阵 Jx(q)。
-Jx(q) = i * sum ( t * c^dag_i c_{i+x} + t' * ... - h.c. ) * exp(i q·r_i)
-注意：q ≠ 0 时 Jx(q) 一般不再是 Hermitian。
-在 Nambu 表象下仍使用 blockdiag(Jx_part, Jx_part)，与现有公式保持一致。
+构建 x 方向电流算符的稀疏矩阵 Jx(q)，其符号和有限 q 归一化由
+build_probe_H_BdG! 的一阶导数定义。
 """
 function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Float64=0.0, qy::Float64=0.0, store::Symbol=:q0)
     Jx_sparse = current_operator_matrix(cache, p; qx=qx, qy=qy)

@@ -190,6 +190,53 @@ function build_twisted_H_BdG!(H::Matrix{ComplexF64},
     return nothing
 end
 
+@inline function probe_factor(cache::ComputeCache, i::Int, dx::Int, λ::Float64, qx::Float64, qy::Float64)
+    dx == 0 && return 1.0 + 0.0im
+    x = cache.x_idx[i] - 1
+    y = cache.y_idx[i] - 1
+    θ = qx * x + qy * y
+    η = (qx == 0.0 && qy == 0.0) ? 1.0 : sqrt(2.0) * cos(θ)
+    return cis(λ * dx * η)
+end
+
+function build_probe_H_BdG!(H::Matrix{ComplexF64},
+                            cache::ComputeCache,
+                            p::ModelParameters,
+                            state::SimulationState;
+                            λ::Float64,
+                            qx::Float64=0.0,
+                            qy::Float64=0.0)
+    N = p.N
+    fill!(H, 0.0 + 0.0im)
+    @inbounds for i in 1:N
+        term = state.disorder_pot[i] - state.μ_eff
+        H[i, i] = term
+        H[i + N, i + N] = -term
+    end
+    mag = cache.magnetic
+    @inbounds for i in 1:N
+        ph = link_phase(mag, i, 1, 0) * probe_factor(cache, i, 1, λ, qx, qy)
+        add_static_hopping!(H, N, i, p.nn_table[i, 1], p.t, ph)
+        ph = link_phase(mag, i, 0, 1)
+        add_static_hopping!(H, N, i, p.nn_table[i, 2], p.t, ph)
+        ph = link_phase(mag, i, 1, 1) * probe_factor(cache, i, 1, λ, qx, qy)
+        add_static_hopping!(H, N, i, p.nnn_table[i, 1], p.tp, ph)
+        ph = link_phase(mag, i, 1, -1) * probe_factor(cache, i, 1, λ, qx, qy)
+        add_static_hopping!(H, N, i, p.nnn_table[i, 4], p.tp, ph)
+    end
+    @inbounds for i in 1:N
+        j_x = p.nn_table[i, 1]
+        val_x = state.Δ[i, 1]
+        H[i, j_x + N] = val_x
+        H[j_x, i + N] = val_x
+        j_y = p.nn_table[i, 2]
+        val_y = state.Δ[i, 2]
+        H[i, j_y + N] = val_y
+        H[j_y, i + N] = val_y
+    end
+    return nothing
+end
+
 @inline function set_hermitian_pair!(H::Matrix{ComplexF64},
                                     row::Int,
                                     col::Int,
