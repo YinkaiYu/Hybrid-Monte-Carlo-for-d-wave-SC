@@ -62,6 +62,13 @@ function compute_forces!(cache::ComputeCache, p::ModelParameters, state::Simulat
     return nothing
 end
 
+"""
+    compute_gauge_pair_bonds(cache, p, state)
+
+Return `(delta_bond, pair_bond)` in the positive-bond `N x 2` convention.
+The cache eigenpairs must already match `state`; `pair_bond` stores
+`pairing_coupling(p) * P_ij` multiplied by the Landau-gauge link phase.
+"""
 function compute_gauge_pair_bonds(cache::ComputeCache, p::ModelParameters, state::SimulationState)
     N = p.N
     U = cache.U
