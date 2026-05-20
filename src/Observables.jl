@@ -469,34 +469,84 @@ end
     return (qx == 0.0 && qy == 0.0) ? 1.0 : sqrt(2.0) * cos(θ)
 end
 
-@inline function add_sparse_hermitian_pair!(I_idx::Vector{Int},
-                                            J_idx::Vector{Int},
-                                            V_val::Vector{ComplexF64},
-                                            row::Int,
-                                            col::Int,
-                                            val::ComplexF64)
-    push!(I_idx, row); push!(J_idx, col); push!(V_val, val)
-    push!(I_idx, col); push!(J_idx, row); push!(V_val, conj(val))
+@inline function add_dense_hermitian_pair!(M::Matrix{ComplexF64},
+                                           row::Int,
+                                           col::Int,
+                                           val::ComplexF64)
+    M[row, col] = val
+    M[col, row] = conj(val)
     return nothing
 end
 
-@inline function add_current_derivative_bond!(I_idx::Vector{Int},
-                                              J_idx::Vector{Int},
-                                              V_val::Vector{ComplexF64},
-                                              cache::ComputeCache,
-                                              N::Int,
-                                              i::Int,
-                                              j::Int,
-                                              tij::Float64,
-                                              dx::Int,
-                                              dy::Int,
-                                              qx::Float64,
-                                              qy::Float64)
+@inline function add_probe_current_derivative_bond!(J::Matrix{ComplexF64},
+                                                    cache::ComputeCache,
+                                                    N::Int,
+                                                    i::Int,
+                                                    j::Int,
+                                                    tij::Float64,
+                                                    dx::Int,
+                                                    dy::Int,
+                                                    qx::Float64,
+                                                    qy::Float64)
     η = probe_weight(cache, i, qx, qy)
     u = link_phase(cache.magnetic, i, dx, dy)
     d1 = -im * tij * η * u
-    add_sparse_hermitian_pair!(I_idx, J_idx, V_val, i, j, d1)
-    add_sparse_hermitian_pair!(I_idx, J_idx, V_val, i + N, j + N, -conj(d1))
+    add_dense_hermitian_pair!(J, i, j, d1)
+    add_dense_hermitian_pair!(J, i + N, j + N, -conj(d1))
+    return nothing
+end
+
+function probe_current_operator_matrix(cache::ComputeCache,
+                                       p::ModelParameters;
+                                       qx::Float64=0.0,
+                                       qy::Float64=0.0)
+    N = p.N
+    J = zeros(ComplexF64, 2 * N, 2 * N)
+
+    @inbounds for i in 1:N
+        add_probe_current_derivative_bond!(J, cache, N,
+                                           i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
+        add_probe_current_derivative_bond!(J, cache, N,
+                                           i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
+        add_probe_current_derivative_bond!(J, cache, N,
+                                           i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
+    end
+
+    return sparse(J)
+end
+
+@inline function add_sparse_current_pair!(I_idx::Vector{Int},
+                                          J_idx::Vector{Int},
+                                          V_val::Vector{ComplexF64},
+                                          row::Int,
+                                          col::Int,
+                                          val::ComplexF64)
+    push!(I_idx, row); push!(J_idx, col); push!(V_val, val)
+    return nothing
+end
+
+@inline function add_kubo_current_bond!(I_idx::Vector{Int},
+                                        J_idx::Vector{Int},
+                                        V_val::Vector{ComplexF64},
+                                        cache::ComputeCache,
+                                        N::Int,
+                                        i::Int,
+                                        j::Int,
+                                        tij::Float64,
+                                        dx::Int,
+                                        dy::Int,
+                                        qx::Float64,
+                                        qy::Float64)
+    x = cache.x_idx[i] - 1
+    y = cache.y_idx[i] - 1
+    phase_q = cis(qx * x + qy * y)
+    u = link_phase(cache.magnetic, i, dx, dy)
+    val = im * tij * phase_q * u
+    val_rev = -im * tij * phase_q * conj(u)
+    add_sparse_current_pair!(I_idx, J_idx, V_val, i, j, val)
+    add_sparse_current_pair!(I_idx, J_idx, V_val, j, i, val_rev)
+    add_sparse_current_pair!(I_idx, J_idx, V_val, i + N, j + N, val)
+    add_sparse_current_pair!(I_idx, J_idx, V_val, j + N, i + N, val_rev)
     return nothing
 end
 
@@ -513,24 +563,15 @@ function current_operator_matrix(cache::ComputeCache,
     sizehint!(V_val, 12 * N)
 
     @inbounds for i in 1:N
-        add_current_derivative_bond!(I_idx, J_idx, V_val, cache, N,
-                                     i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
-        add_current_derivative_bond!(I_idx, J_idx, V_val, cache, N,
-                                     i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
-        add_current_derivative_bond!(I_idx, J_idx, V_val, cache, N,
-                                     i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
+        add_kubo_current_bond!(I_idx, J_idx, V_val, cache, N,
+                               i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
+        add_kubo_current_bond!(I_idx, J_idx, V_val, cache, N,
+                               i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
+        add_kubo_current_bond!(I_idx, J_idx, V_val, cache, N,
+                               i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
     end
 
     return sparse(I_idx, J_idx, V_val, 2 * N, 2 * N)
-end
-
-@inline function add_dense_hermitian_pair!(M::Matrix{ComplexF64},
-                                           row::Int,
-                                           col::Int,
-                                           val::ComplexF64)
-    M[row, col] = val
-    M[col, row] = conj(val)
-    return nothing
 end
 
 @inline function add_diamagnetic_bond!(K::Matrix{ComplexF64},
@@ -568,8 +609,8 @@ end
 """
     build_current_operator!(cache::ComputeCache, p::ModelParameters; qx=0.0, qy=0.0, store=:q0)
 
-构建 x 方向电流算符的稀疏矩阵 Jx(q)，其符号和有限 q 归一化由
-build_probe_H_BdG! 的一阶导数定义。
+构建生产路径使用的 x 方向复数 q Kubo 电流算符稀疏矩阵 Jx(q)。
+诊断用的实 probe 导数算符由 probe_current_operator_matrix 构建。
 """
 function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Float64=0.0, qy::Float64=0.0, store::Symbol=:q0)
     Jx_sparse = current_operator_matrix(cache, p; qx=qx, qy=qy)

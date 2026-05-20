@@ -125,31 +125,33 @@ function random_finite_field_state(p)
 end
 
 @testset "Kubo operators match Hamiltonian derivatives" begin
-    p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2, boundary_condition=:magnetic_pbc)
-    state = random_finite_field_state(p)
-    cache = initialize_cache(p)
-    init_static_H!(cache, p, state)
-    update_H_BdG!(cache, p, state)
+    for (Lx, Ly) in ((4, 4), (2, 2))
+        p = magnetic_test_parameters(Lx=Lx, Ly=Ly, n_flux_sc=2, boundary_condition=:magnetic_pbc)
+        state = random_finite_field_state(p)
+        cache = initialize_cache(p)
+        init_static_H!(cache, p, state)
+        update_H_BdG!(cache, p, state)
 
-    dim = 2 * p.N
-    Hplus = zeros(ComplexF64, dim, dim)
-    Hminus = zeros(ComplexF64, dim, dim)
-    H0 = zeros(ComplexF64, dim, dim)
-    eps = 1.0e-6
+        dim = 2 * p.N
+        Hplus = zeros(ComplexF64, dim, dim)
+        Hminus = zeros(ComplexF64, dim, dim)
+        H0 = zeros(ComplexF64, dim, dim)
+        eps = 1.0e-6
 
-    for qy in (0.0, 2π / p.Ly)
-        DwaveHMC.build_probe_H_BdG!(Hplus, cache, p, state; λ=eps, qx=0.0, qy=qy)
-        DwaveHMC.build_probe_H_BdG!(Hminus, cache, p, state; λ=-eps, qx=0.0, qy=qy)
-        DwaveHMC.build_probe_H_BdG!(H0, cache, p, state; λ=0.0, qx=0.0, qy=qy)
+        for qy in (0.0, 2π / p.Ly)
+            DwaveHMC.build_probe_H_BdG!(Hplus, cache, p, state; λ=eps, qx=0.0, qy=qy)
+            DwaveHMC.build_probe_H_BdG!(Hminus, cache, p, state; λ=-eps, qx=0.0, qy=qy)
+            DwaveHMC.build_probe_H_BdG!(H0, cache, p, state; λ=0.0, qx=0.0, qy=qy)
 
-        J_fd = (Matrix(Hermitian(Hplus, :U)) - Matrix(Hermitian(Hminus, :U))) ./ (2eps)
-        K_fd = (Matrix(Hermitian(Hplus, :U)) + Matrix(Hermitian(Hminus, :U)) -
-                2 .* Matrix(Hermitian(H0, :U))) ./ (eps^2)
+            J_fd = (Matrix(Hermitian(Hplus, :U)) - Matrix(Hermitian(Hminus, :U))) ./ (2eps)
+            K_fd = (Matrix(Hermitian(Hplus, :U)) + Matrix(Hermitian(Hminus, :U)) -
+                    2 .* Matrix(Hermitian(H0, :U))) ./ (eps^2)
 
-        J_an = Matrix(DwaveHMC.current_operator_matrix(cache, p; qx=0.0, qy=qy))
-        K_an = DwaveHMC.diamagnetic_operator_matrix(cache, p; qx=0.0, qy=qy)
+            J_an = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p; qx=0.0, qy=qy))
+            K_an = DwaveHMC.diamagnetic_operator_matrix(cache, p; qx=0.0, qy=qy)
 
-        @test norm(J_an - J_fd) / max(norm(J_fd), 1.0) < 1.0e-6
-        @test norm(K_an - K_fd) / max(norm(K_fd), 1.0) < 5.0e-4
+            @test norm(J_an - J_fd) / max(norm(J_fd), 1.0) < 1.0e-6
+            @test norm(K_an - K_fd) / max(norm(K_fd), 1.0) < 5.0e-4
+        end
     end
 end
