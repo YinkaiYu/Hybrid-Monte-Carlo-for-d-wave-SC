@@ -19,24 +19,79 @@ const SPECTRA_OUTPUT_FILES = [
     "spectra_dos_AN.csv",
     "spectra_dos_node.csv",
     "spectra_path_peaks.csv",
+    "spectra_dos_M_landau_gauge_diagnostic.csv",
+    "spectra_ak0_landau_gauge_diagnostic.csv",
+    "spectra_MX_path_landau_gauge_diagnostic.csv",
+    "spectra_XG_path_landau_gauge_diagnostic.csv",
+    "spectra_dos_AN_landau_gauge_diagnostic.csv",
+    "spectra_dos_node_landau_gauge_diagnostic.csv",
+    "spectra_path_peaks_landau_gauge_diagnostic.csv",
 ]
 
 const DOS_M_KEY_PAIRS = [
     ("dos_M_eta", "dos_M"),
+]
+const DOS_M_DIAGNOSTIC_KEY_PAIRS = [
     ("dos_M_eta_landau_gauge_diagnostic", "dos_M_landau_gauge_diagnostic"),
 ]
 const AK0_KEY_PAIRS = [
     ("A_k0_eta", "A_k0"),
+]
+const AK0_DIAGNOSTIC_KEY_PAIRS = [
     ("A_k_omega0_eta_landau_gauge_diagnostic", "A_k_omega0_landau_gauge_diagnostic"),
 ]
 const MX_PATH_KEY_PAIRS = [
     ("A_MX_path_eta", "A_MX_path"),
+]
+const MX_PATH_DIAGNOSTIC_KEY_PAIRS = [
     ("A_MX_path_eta_landau_gauge_diagnostic", "A_MX_path_landau_gauge_diagnostic"),
 ]
 const XG_PATH_KEY_PAIRS = [
     ("A_XG_path_eta", "A_XG_path"),
+]
+const XG_PATH_DIAGNOSTIC_KEY_PAIRS = [
     ("A_XG_path_eta_landau_gauge_diagnostic", "A_XG_path_landau_gauge_diagnostic"),
 ]
+
+const SPECTRA_GENERIC_MOMENTUM_FILES = (
+    "spectra_dos_M.csv",
+    "spectra_ak0.csv",
+    "spectra_MX_path.csv",
+    "spectra_XG_path.csv",
+    "spectra_dos_AN.csv",
+    "spectra_dos_node.csv",
+    "spectra_path_peaks.csv",
+)
+
+const SPECTRA_DIAGNOSTIC_MOMENTUM_FILES = (
+    "spectra_dos_M_landau_gauge_diagnostic.csv",
+    "spectra_ak0_landau_gauge_diagnostic.csv",
+    "spectra_MX_path_landau_gauge_diagnostic.csv",
+    "spectra_XG_path_landau_gauge_diagnostic.csv",
+    "spectra_dos_AN_landau_gauge_diagnostic.csv",
+    "spectra_dos_node_landau_gauge_diagnostic.csv",
+    "spectra_path_peaks_landau_gauge_diagnostic.csv",
+)
+
+function momentum_key_pairs(source::Symbol)
+    source === :ordinary && return (DOS_M_KEY_PAIRS, AK0_KEY_PAIRS, MX_PATH_KEY_PAIRS, XG_PATH_KEY_PAIRS)
+    source === :landau_gauge_diagnostic &&
+        return (DOS_M_DIAGNOSTIC_KEY_PAIRS, AK0_DIAGNOSTIC_KEY_PAIRS,
+                MX_PATH_DIAGNOSTIC_KEY_PAIRS, XG_PATH_DIAGNOSTIC_KEY_PAIRS)
+    return ((), (), (), ())
+end
+
+function remove_files!(dir_path, names)
+    for name in names
+        rm(joinpath(dir_path, name); force=true)
+    end
+end
+
+function spectra_name(base::AbstractString, source::Symbol)
+    source === :landau_gauge_diagnostic || return base
+    root, ext = splitext(base)
+    return string(root, "_landau_gauge_diagnostic", ext)
+end
 
 function remove_spectra_outputs!(dir_path)
     for filename in SPECTRA_OUTPUT_FILES
@@ -136,10 +191,12 @@ function process_single_config(jld_path; eta_factor=1)
             sum_dc = has_dc ? selected_scalar(g1, "dc_cond_eta", "dc_cond", eta_idx) : 0.0
             sum_opt = copy(selected_vector(g1, "opt_cond_eta", "opt_cond", eta_idx))
             sum_dos = copy(selected_vector(g1, "dos_eta", "dos", eta_idx))
-            first_dos_M = selected_vector_any(g1, DOS_M_KEY_PAIRS, eta_idx)
-            first_ak = selected_matrix_any(g1, AK0_KEY_PAIRS, eta_idx)
-            first_mx_path = selected_matrix_any(g1, MX_PATH_KEY_PAIRS, eta_idx)
-            first_xg_path = selected_matrix_any(g1, XG_PATH_KEY_PAIRS, eta_idx)
+            momentum_source = momentum_source_for_group(g1)
+            dos_M_pairs, ak_pairs, mx_pairs, xg_pairs = momentum_key_pairs(momentum_source)
+            first_dos_M = selected_vector_any(g1, dos_M_pairs, eta_idx)
+            first_ak = selected_matrix_any(g1, ak_pairs, eta_idx)
+            first_mx_path = selected_matrix_any(g1, mx_pairs, eta_idx)
+            first_xg_path = selected_matrix_any(g1, xg_pairs, eta_idx)
             sum_dos_M = first_dos_M === nothing ? nothing : copy(first_dos_M)
             sum_ak = first_ak === nothing ? nothing : copy(first_ak)
             sum_mx_path = first_mx_path === nothing ? nothing : copy(first_mx_path)
@@ -162,10 +219,13 @@ function process_single_config(jld_path; eta_factor=1)
 
             for i in 2:length(sweep_keys)
                 g = file[sweep_keys[i]]
-                sweep_dos_M = selected_vector_any(g, DOS_M_KEY_PAIRS, eta_idx)
-                sweep_ak = selected_matrix_any(g, AK0_KEY_PAIRS, eta_idx)
-                sweep_mx_path = selected_matrix_any(g, MX_PATH_KEY_PAIRS, eta_idx)
-                sweep_xg_path = selected_matrix_any(g, XG_PATH_KEY_PAIRS, eta_idx)
+                sweep_source = momentum_source_for_group(g)
+                sweep_source === momentum_source ||
+                    error("Incompatible spectra config: momentum source changes across sweeps ($(momentum_source) vs $(sweep_source))")
+                sweep_dos_M = selected_vector_any(g, dos_M_pairs, eta_idx)
+                sweep_ak = selected_matrix_any(g, ak_pairs, eta_idx)
+                sweep_mx_path = selected_matrix_any(g, mx_pairs, eta_idx)
+                sweep_xg_path = selected_matrix_any(g, xg_pairs, eta_idx)
                 (sweep_dos_M === nothing) == (sum_dos_M === nothing) ||
                     error("Incompatible spectra config: dos_M presence changes across sweeps")
                 (sweep_ak === nothing) == (sum_ak === nothing) ||
@@ -227,6 +287,7 @@ function process_single_config(jld_path; eta_factor=1)
                    xg_path=sum_xg_path === nothing ? nothing : (sum_xg_path ./ count),
                    node_path=sum_node_path === nothing ? nothing : (sum_node_path ./ count),
                    node_from_patch=has_node_patch,
+                   momentum_source=momentum_source,
                    selected_eta=selected_eta,
                    selected_transport_eta=has_dc ? selected_transport_eta : nothing,
                    params=file["params"],
@@ -279,6 +340,7 @@ function compatibility_signature(res)
         xg_path_size=res.xg_path === nothing ? nothing : size(res.xg_path),
         node_path_size=res.node_path === nothing ? nothing : size(res.node_path),
         node_from_patch=res.node_from_patch,
+        momentum_source=res.momentum_source,
         selected_eta=res.selected_eta,
         selected_transport_eta=res.selected_transport_eta,
         mx_path_kx=meta["mx_path_kx"],
@@ -402,23 +464,39 @@ function process_T_directory(dir_path; eta_factor=1)
     end
 
     meta = reference_meta
+    momentum_source = reference_signature.momentum_source
     omega_grid = meta["omega_grid"]
     dos_omega_grid = meta["dos_omega_grid"]
+    if momentum_source === :landau_gauge_diagnostic
+        remove_files!(dir_path, SPECTRA_GENERIC_MOMENTUM_FILES)
+    else
+        remove_files!(dir_path, SPECTRA_DIAGNOSTIC_MOMENTUM_FILES)
+    end
 
     write_series_csv(joinpath(dir_path, "spectra_opt_cond.csv"),
                      "omega,Re_Sigma,Error", omega_grid, final_opt, err_opt)
 
     if length(samples_dos_M) == real_n
         final_dos_M, err_dos_M = calc_stats(samples_dos_M)
-        open(joinpath(dir_path, "spectra_dos.csv"), "w") do io
-            println(io, "omega,DOS,DOS_Error,DOS_M,DOS_M_Error")
-            for i in eachindex(final_dos)
-                @printf(io, "%.6f,%.6e,%.6e,%.6e,%.6e\n",
-                        dos_omega_grid[i], final_dos[i], err_dos[i],
-                        final_dos_M[i], err_dos_M[i])
+        if momentum_source === :landau_gauge_diagnostic
+            open(joinpath(dir_path, "spectra_dos.csv"), "w") do io
+                println(io, "omega,DOS,DOS_Error")
+                for i in eachindex(final_dos)
+                    @printf(io, "%.6f,%.6e,%.6e\n",
+                            dos_omega_grid[i], final_dos[i], err_dos[i])
+                end
+            end
+        else
+            open(joinpath(dir_path, "spectra_dos.csv"), "w") do io
+                println(io, "omega,DOS,DOS_Error,DOS_M,DOS_M_Error")
+                for i in eachindex(final_dos)
+                    @printf(io, "%.6f,%.6e,%.6e,%.6e,%.6e\n",
+                            dos_omega_grid[i], final_dos[i], err_dos[i],
+                            final_dos_M[i], err_dos_M[i])
+                end
             end
         end
-        write_series_csv(joinpath(dir_path, "spectra_dos_M.csv"),
+        write_series_csv(joinpath(dir_path, spectra_name("spectra_dos_M.csv", momentum_source)),
                          "omega,DOS_M,Error", dos_omega_grid,
                          final_dos_M, err_dos_M)
     else
@@ -430,6 +508,7 @@ function process_T_directory(dir_path; eta_factor=1)
             end
         end
         rm(joinpath(dir_path, "spectra_dos_M.csv"); force=true)
+        rm(joinpath(dir_path, "spectra_dos_M_landau_gauge_diagnostic.csv"); force=true)
     end
 
     if length(samples_dos_M_patch) == real_n
@@ -443,9 +522,11 @@ function process_T_directory(dir_path; eta_factor=1)
 
     if length(samples_ak) == real_n
         final_ak, err_ak = calc_stats(samples_ak)
-        write_ak_csv(joinpath(dir_path, "spectra_ak0.csv"), final_ak, err_ak)
+        write_ak_csv(joinpath(dir_path, spectra_name("spectra_ak0.csv", momentum_source)),
+                     final_ak, err_ak)
     else
         rm(joinpath(dir_path, "spectra_ak0.csv"); force=true)
+        rm(joinpath(dir_path, "spectra_ak0_landau_gauge_diagnostic.csv"); force=true)
     end
 
     if length(samples_ldos0) == real_n
@@ -464,10 +545,10 @@ function process_T_directory(dir_path; eta_factor=1)
         final_mx_path, err_mx_path = calc_stats(samples_mx_path)
         final_xg_path, err_xg_path = calc_stats(samples_xg_path)
         final_node_path, err_node_path = calc_stats(samples_node_path)
-        write_path_csv(joinpath(dir_path, "spectra_MX_path.csv"), final_mx_path,
+        write_path_csv(joinpath(dir_path, spectra_name("spectra_MX_path.csv", momentum_source)), final_mx_path,
                        err_mx_path, dos_omega_grid, mx_kx, meta["mx_path_ky"],
                        mx_kx_idx, meta["mx_path_ky_idx"])
-        write_path_csv(joinpath(dir_path, "spectra_XG_path.csv"), final_xg_path,
+        write_path_csv(joinpath(dir_path, spectra_name("spectra_XG_path.csv", momentum_source)), final_xg_path,
                        err_xg_path, dos_omega_grid, meta["xg_path_kx"],
                        meta["xg_path_ky"], meta["xg_path_kx_idx"], meta["xg_path_ky_idx"])
         final_AN, err_AN, peak_AN = path_observable(final_mx_path, dos_omega_grid,
@@ -478,19 +559,22 @@ function process_T_directory(dir_path; eta_factor=1)
                                                           meta["xg_path_kx"], meta["xg_path_ky"];
                                                           err_path=err_node_path,
                                                           radius=0)
-        write_series_csv(joinpath(dir_path, "spectra_dos_AN.csv"),
+        write_series_csv(joinpath(dir_path, spectra_name("spectra_dos_AN.csv", momentum_source)),
                          "omega,DOS_AN,Error", dos_omega_grid, final_AN, err_AN)
-        write_series_csv(joinpath(dir_path, "spectra_dos_node.csv"),
+        write_series_csv(joinpath(dir_path, spectra_name("spectra_dos_node.csv", momentum_source)),
                          "omega,DOS_node,Error", dos_omega_grid, final_node, err_node)
-        write_peak_summary(joinpath(dir_path, "spectra_path_peaks.csv"),
+        write_peak_summary(joinpath(dir_path, spectra_name("spectra_path_peaks.csv", momentum_source)),
                            [(source="ensemble", kind="AN", peak_AN...),
                             (source="ensemble", kind="node", peak_node...)])
     else
-        for name in ("spectra_MX_path.csv", "spectra_XG_path.csv",
-                     "spectra_dos_AN.csv", "spectra_dos_node.csv",
-                     "spectra_path_peaks.csv")
-            rm(joinpath(dir_path, name); force=true)
-        end
+        remove_files!(dir_path, ("spectra_MX_path.csv", "spectra_XG_path.csv",
+                                 "spectra_dos_AN.csv", "spectra_dos_node.csv",
+                                 "spectra_path_peaks.csv",
+                                 "spectra_MX_path_landau_gauge_diagnostic.csv",
+                                 "spectra_XG_path_landau_gauge_diagnostic.csv",
+                                 "spectra_dos_AN_landau_gauge_diagnostic.csv",
+                                 "spectra_dos_node_landau_gauge_diagnostic.csv",
+                                 "spectra_path_peaks_landau_gauge_diagnostic.csv"))
     end
 end
 

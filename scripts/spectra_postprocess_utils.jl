@@ -107,6 +107,24 @@ function selected_matrix_any(group, key_pairs, eta_idx::Int)
     return nothing
 end
 
+function momentum_source_for_group(group)
+    ordinary_keys = ("dos_M", "dos_M_eta", "A_k0", "A_k0_eta",
+                     "A_MX_path", "A_MX_path_eta", "A_XG_path", "A_XG_path_eta")
+    diagnostic_keys = ("dos_M_landau_gauge_diagnostic",
+                       "dos_M_eta_landau_gauge_diagnostic",
+                       "A_k_omega0_landau_gauge_diagnostic",
+                       "A_k_omega0_eta_landau_gauge_diagnostic",
+                       "A_MX_path_landau_gauge_diagnostic",
+                       "A_MX_path_eta_landau_gauge_diagnostic",
+                       "A_XG_path_landau_gauge_diagnostic",
+                       "A_XG_path_eta_landau_gauge_diagnostic")
+    has_ordinary = has_any_key(group, ordinary_keys)
+    has_diagnostic = has_any_key(group, diagnostic_keys)
+    has_ordinary && has_diagnostic &&
+        error("Incompatible spectra config: ordinary and Landau-gauge diagnostic momentum spectra are both present")
+    return has_diagnostic ? :landau_gauge_diagnostic : (has_ordinary ? :ordinary : :none)
+end
+
 function calc_scalar_stats(values::AbstractVector{<:Real})
     n_samples = length(values)
     n_samples > 0 || error("Cannot calculate scalar stats for empty data")

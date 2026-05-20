@@ -162,6 +162,46 @@ function touch_csv(path)
     end
 end
 
+const PROCESSED_GENERIC_MOMENTUM_FILES = (
+    "processed_dos_M.csv",
+    "processed_ak0.csv",
+    "processed_MX_path.csv",
+    "processed_XG_path.csv",
+    "processed_dos_AN.csv",
+    "processed_dos_node.csv",
+    "processed_path_peaks.csv",
+)
+
+const PROCESSED_DIAGNOSTIC_MOMENTUM_FILES = (
+    "processed_dos_M_landau_gauge_diagnostic.csv",
+    "processed_ak0_landau_gauge_diagnostic.csv",
+    "processed_MX_path_landau_gauge_diagnostic.csv",
+    "processed_XG_path_landau_gauge_diagnostic.csv",
+    "processed_dos_AN_landau_gauge_diagnostic.csv",
+    "processed_dos_node_landau_gauge_diagnostic.csv",
+    "processed_path_peaks_landau_gauge_diagnostic.csv",
+)
+
+const SPECTRA_GENERIC_MOMENTUM_FILES = (
+    "spectra_dos_M.csv",
+    "spectra_ak0.csv",
+    "spectra_MX_path.csv",
+    "spectra_XG_path.csv",
+    "spectra_dos_AN.csv",
+    "spectra_dos_node.csv",
+    "spectra_path_peaks.csv",
+)
+
+const SPECTRA_DIAGNOSTIC_MOMENTUM_FILES = (
+    "spectra_dos_M_landau_gauge_diagnostic.csv",
+    "spectra_ak0_landau_gauge_diagnostic.csv",
+    "spectra_MX_path_landau_gauge_diagnostic.csv",
+    "spectra_XG_path_landau_gauge_diagnostic.csv",
+    "spectra_dos_AN_landau_gauge_diagnostic.csv",
+    "spectra_dos_node_landau_gauge_diagnostic.csv",
+    "spectra_path_peaks_landau_gauge_diagnostic.csv",
+)
+
 csv_data_rows(path) = length(readlines(path)) - 1
 
 function first_data_value(path, column)
@@ -209,10 +249,7 @@ end
                                 use_twisted_spectra=false,
                                 spectra_Ltw=1,
                                 momentum_mode=:none)
-        for name in ("processed_dos_M.csv", "processed_ak0.csv",
-                     "processed_MX_path.csv", "processed_XG_path.csv",
-                     "processed_dos_AN.csv", "processed_dos_node.csv",
-                     "processed_path_peaks.csv")
+        for name in (PROCESSED_GENERIC_MOMENTUM_FILES..., PROCESSED_DIAGNOSTIC_MOMENTUM_FILES...)
             touch_csv(joinpath(target_dir, name))
         end
 
@@ -220,16 +257,13 @@ end
 
         @test isfile(joinpath(target_dir, "processed_dos.csv"))
         @test isfile(joinpath(target_dir, "processed_ldos0.csv"))
-        for name in ("processed_dos_M.csv", "processed_ak0.csv",
-                     "processed_MX_path.csv", "processed_XG_path.csv",
-                     "processed_dos_AN.csv", "processed_dos_node.csv",
-                     "processed_path_peaks.csv")
+        for name in (PROCESSED_GENERIC_MOMENTUM_FILES..., PROCESSED_DIAGNOSTIC_MOMENTUM_FILES...)
             @test !isfile(joinpath(target_dir, name))
         end
     end
 end
 
-@testset "process_spectra.jl reads finite-field diagnostic momentum names" begin
+@testset "process_spectra.jl writes diagnostic momentum outputs with warning filenames" begin
     mktempdir() do root
         target_dir = joinpath(root, PROCESS_TARGET_REL)
         write_synthetic_spectra(target_dir;
@@ -239,11 +273,14 @@ end
                                 momentum_mode=:diagnostic)
         Base.invokelatest(ProcessSpectraScript.process_spectra_directory, target_dir)
 
-        @test csv_data_rows(joinpath(target_dir, "processed_ak0.csv")) == 16
-        @test isfile(joinpath(target_dir, "processed_dos_M.csv"))
-        @test isfile(joinpath(target_dir, "processed_MX_path.csv"))
-        @test isfile(joinpath(target_dir, "processed_XG_path.csv"))
-        @test first_data_value(joinpath(target_dir, "processed_dos_M.csv"), 2) == 7.0
+        @test csv_data_rows(joinpath(target_dir, "processed_ak0_landau_gauge_diagnostic.csv")) == 16
+        @test isfile(joinpath(target_dir, "processed_dos_M_landau_gauge_diagnostic.csv"))
+        @test isfile(joinpath(target_dir, "processed_MX_path_landau_gauge_diagnostic.csv"))
+        @test isfile(joinpath(target_dir, "processed_XG_path_landau_gauge_diagnostic.csv"))
+        @test first_data_value(joinpath(target_dir, "processed_dos_M_landau_gauge_diagnostic.csv"), 2) == 7.0
+        for name in PROCESSED_GENERIC_MOMENTUM_FILES
+            @test !isfile(joinpath(target_dir, name))
+        end
     end
 end
 
@@ -358,6 +395,28 @@ end
         @test first_data_value(joinpath(t_dir, "spectra_dc_cond.csv"), 2) == 406.0
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 36.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 52.0
+    end
+end
+
+@testset "projectHPC batch processor skips diagnostic momentum configs when reference is ordinary" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001");
+                                offset=0.0,
+                                nsweeps=1,
+                                momentum_mode=:old)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002");
+                                offset=100.0,
+                                nsweeps=1,
+                                momentum_mode=:diagnostic)
+
+        Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
+
+        @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 4) == 7.0
+        @test isfile(joinpath(t_dir, "spectra_ak0.csv"))
+        for name in SPECTRA_DIAGNOSTIC_MOMENTUM_FILES
+            @test !isfile(joinpath(t_dir, name))
+        end
     end
 end
 

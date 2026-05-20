@@ -25,20 +25,68 @@ end
 
 const DOS_M_KEY_PAIRS = [
     ("dos_M_eta", "dos_M"),
+]
+const DOS_M_DIAGNOSTIC_KEY_PAIRS = [
     ("dos_M_eta_landau_gauge_diagnostic", "dos_M_landau_gauge_diagnostic"),
 ]
 const AK0_KEY_PAIRS = [
     ("A_k0_eta", "A_k0"),
+]
+const AK0_DIAGNOSTIC_KEY_PAIRS = [
     ("A_k_omega0_eta_landau_gauge_diagnostic", "A_k_omega0_landau_gauge_diagnostic"),
 ]
 const MX_PATH_KEY_PAIRS = [
     ("A_MX_path_eta", "A_MX_path"),
+]
+const MX_PATH_DIAGNOSTIC_KEY_PAIRS = [
     ("A_MX_path_eta_landau_gauge_diagnostic", "A_MX_path_landau_gauge_diagnostic"),
 ]
 const XG_PATH_KEY_PAIRS = [
     ("A_XG_path_eta", "A_XG_path"),
+]
+const XG_PATH_DIAGNOSTIC_KEY_PAIRS = [
     ("A_XG_path_eta_landau_gauge_diagnostic", "A_XG_path_landau_gauge_diagnostic"),
 ]
+
+const PROCESSED_GENERIC_MOMENTUM_FILES = (
+    "processed_dos_M.csv",
+    "processed_ak0.csv",
+    "processed_MX_path.csv",
+    "processed_XG_path.csv",
+    "processed_dos_AN.csv",
+    "processed_dos_node.csv",
+    "processed_path_peaks.csv",
+)
+
+const PROCESSED_DIAGNOSTIC_MOMENTUM_FILES = (
+    "processed_dos_M_landau_gauge_diagnostic.csv",
+    "processed_ak0_landau_gauge_diagnostic.csv",
+    "processed_MX_path_landau_gauge_diagnostic.csv",
+    "processed_XG_path_landau_gauge_diagnostic.csv",
+    "processed_dos_AN_landau_gauge_diagnostic.csv",
+    "processed_dos_node_landau_gauge_diagnostic.csv",
+    "processed_path_peaks_landau_gauge_diagnostic.csv",
+)
+
+function momentum_key_pairs(source::Symbol)
+    source === :ordinary && return (DOS_M_KEY_PAIRS, AK0_KEY_PAIRS, MX_PATH_KEY_PAIRS, XG_PATH_KEY_PAIRS)
+    source === :landau_gauge_diagnostic &&
+        return (DOS_M_DIAGNOSTIC_KEY_PAIRS, AK0_DIAGNOSTIC_KEY_PAIRS,
+                MX_PATH_DIAGNOSTIC_KEY_PAIRS, XG_PATH_DIAGNOSTIC_KEY_PAIRS)
+    return ((), (), (), ())
+end
+
+function remove_files!(target_dir, names)
+    for name in names
+        rm(joinpath(target_dir, name); force=true)
+    end
+end
+
+function processed_name(base::AbstractString, source::Symbol)
+    source === :landau_gauge_diagnostic || return base
+    root, ext = splitext(base)
+    return string(root, "_landau_gauge_diagnostic", ext)
+end
 
 function collect_sweep_data(file; eta_factor=1)
     eta_idx = selected_eta_index(file, eta_factor)
@@ -51,16 +99,24 @@ function collect_sweep_data(file; eta_factor=1)
     list_ak = Vector{Matrix{Float64}}()
     list_mx_path = Vector{Matrix{Float64}}()
     list_xg_path = Vector{Matrix{Float64}}()
+    momentum_source = nothing
 
     for key in keys(file)
         if startswith(key, "sweep_")
             g = file[key]
+            source = momentum_source_for_group(g)
+            if momentum_source === nothing
+                momentum_source = source
+            elseif source !== momentum_source
+                error("Incompatible spectra config: momentum source changes across sweeps ($(momentum_source) vs $(source))")
+            end
+            dos_M_pairs, ak_pairs, mx_pairs, xg_pairs = momentum_key_pairs(source)
             if haskey(g, "dc_cond_eta") || haskey(g, "dc_cond")
                 push!(list_dc, selected_scalar(g, "dc_cond_eta", "dc_cond", eta_idx))
             end
             push!(list_opt, selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx))
             push!(list_dos, selected_vector(g, "dos_eta", "dos", eta_idx))
-            dos_M = selected_vector_any(g, DOS_M_KEY_PAIRS, eta_idx)
+            dos_M = selected_vector_any(g, dos_M_pairs, eta_idx)
             if dos_M !== nothing
                 push!(list_dos_M, dos_M)
             end
@@ -70,9 +126,9 @@ function collect_sweep_data(file; eta_factor=1)
             if haskey(g, "LDOS_0") || haskey(g, "LDOS_0_eta")
                 push!(list_ldos0, selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx))
             end
-            ak = selected_matrix_any(g, AK0_KEY_PAIRS, eta_idx)
-            mx_path = selected_matrix_any(g, MX_PATH_KEY_PAIRS, eta_idx)
-            xg_path = selected_matrix_any(g, XG_PATH_KEY_PAIRS, eta_idx)
+            ak = selected_matrix_any(g, ak_pairs, eta_idx)
+            mx_path = selected_matrix_any(g, mx_pairs, eta_idx)
+            xg_path = selected_matrix_any(g, xg_pairs, eta_idx)
             if ak !== nothing
                 push!(list_ak, ak)
             end
@@ -94,6 +150,7 @@ function collect_sweep_data(file; eta_factor=1)
             ak=list_ak,
             mx_path=list_mx_path,
             xg_path=list_xg_path,
+            momentum_source=momentum_source === nothing ? :none : momentum_source,
             count=length(list_dos))
 end
 
@@ -139,10 +196,13 @@ function process_single_directory(target_dir; eta_factor=1)
                          "omega,DOS,Error", meta.dos_omega_grid, mean_dos, err_dos)
         if length(data.dos_M) == data.count
             mean_dos_M, err_dos_M = calc_stats(data.dos_M)
-            write_series_csv(joinpath(target_dir, "processed_dos_M.csv"),
+            write_series_csv(joinpath(target_dir, processed_name("processed_dos_M.csv", data.momentum_source)),
                              "omega,DOS_M,Error", meta.dos_omega_grid, mean_dos_M, err_dos_M)
+            stale = data.momentum_source === :landau_gauge_diagnostic ?
+                    PROCESSED_GENERIC_MOMENTUM_FILES : PROCESSED_DIAGNOSTIC_MOMENTUM_FILES
+            remove_files!(target_dir, stale)
         else
-            rm(joinpath(target_dir, "processed_dos_M.csv"); force=true)
+            remove_files!(target_dir, (PROCESSED_GENERIC_MOMENTUM_FILES..., PROCESSED_DIAGNOSTIC_MOMENTUM_FILES...))
         end
         if !isempty(data.dos_M_patch)
             mean_dos_M_patch, err_dos_M_patch = calc_stats(data.dos_M_patch)
@@ -163,9 +223,11 @@ function process_single_directory(target_dir; eta_factor=1)
 
         if length(data.ak) == data.count
             mean_ak, err_ak = calc_stats(data.ak)
-            write_ak_csv(joinpath(target_dir, "processed_ak0.csv"), mean_ak, err_ak)
+            write_ak_csv(joinpath(target_dir, processed_name("processed_ak0.csv", data.momentum_source)),
+                         mean_ak, err_ak)
         else
             rm(joinpath(target_dir, "processed_ak0.csv"); force=true)
+            rm(joinpath(target_dir, "processed_ak0_landau_gauge_diagnostic.csv"); force=true)
         end
 
         mx_kx = fill(meta.mx_path_kx, length(meta.mx_path_ky))
@@ -173,10 +235,10 @@ function process_single_directory(target_dir; eta_factor=1)
         if length(data.mx_path) == data.count && length(data.xg_path) == data.count
             mean_mx_path, err_mx_path = calc_stats(data.mx_path)
             mean_xg_path, err_xg_path = calc_stats(data.xg_path)
-            write_path_csv(joinpath(target_dir, "processed_MX_path.csv"), mean_mx_path,
+            write_path_csv(joinpath(target_dir, processed_name("processed_MX_path.csv", data.momentum_source)), mean_mx_path,
                            err_mx_path, meta.dos_omega_grid, mx_kx, meta.mx_path_ky,
                            mx_kx_idx, meta.mx_path_ky_idx)
-            write_path_csv(joinpath(target_dir, "processed_XG_path.csv"), mean_xg_path,
+            write_path_csv(joinpath(target_dir, processed_name("processed_XG_path.csv", data.momentum_source)), mean_xg_path,
                            err_xg_path, meta.dos_omega_grid, meta.xg_path_kx,
                            meta.xg_path_ky, meta.xg_path_kx_idx, meta.xg_path_ky_idx)
 
@@ -186,19 +248,22 @@ function process_single_directory(target_dir; eta_factor=1)
             dos_node, err_node, peak_node = path_observable(mean_xg_path, meta.dos_omega_grid,
                                                             meta.xg_path_kx, meta.xg_path_ky;
                                                             err_path=err_xg_path)
-            write_series_csv(joinpath(target_dir, "processed_dos_AN.csv"),
+            write_series_csv(joinpath(target_dir, processed_name("processed_dos_AN.csv", data.momentum_source)),
                              "omega,DOS_AN,Error", meta.dos_omega_grid, dos_AN, err_AN)
-            write_series_csv(joinpath(target_dir, "processed_dos_node.csv"),
+            write_series_csv(joinpath(target_dir, processed_name("processed_dos_node.csv", data.momentum_source)),
                              "omega,DOS_node,Error", meta.dos_omega_grid, dos_node, err_node)
-            write_peak_summary(joinpath(target_dir, "processed_path_peaks.csv"),
+            write_peak_summary(joinpath(target_dir, processed_name("processed_path_peaks.csv", data.momentum_source)),
                                [(source="bins", kind="AN", peak_AN...),
                                 (source="bins", kind="node", peak_node...)])
         else
-            for name in ("processed_MX_path.csv", "processed_XG_path.csv",
-                         "processed_dos_AN.csv", "processed_dos_node.csv",
-                         "processed_path_peaks.csv")
-                rm(joinpath(target_dir, name); force=true)
-            end
+            remove_files!(target_dir, ("processed_MX_path.csv", "processed_XG_path.csv",
+                                       "processed_dos_AN.csv", "processed_dos_node.csv",
+                                       "processed_path_peaks.csv",
+                                       "processed_MX_path_landau_gauge_diagnostic.csv",
+                                       "processed_XG_path_landau_gauge_diagnostic.csv",
+                                       "processed_dos_AN_landau_gauge_diagnostic.csv",
+                                       "processed_dos_node_landau_gauge_diagnostic.csv",
+                                       "processed_path_peaks_landau_gauge_diagnostic.csv"))
         end
 
         println("  Done processing $target_dir")
