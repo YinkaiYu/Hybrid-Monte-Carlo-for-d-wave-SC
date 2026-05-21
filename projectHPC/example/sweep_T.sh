@@ -37,7 +37,8 @@ measure_twist=false
 twist_Ax=0.001
 n_flux_sc=0
 boundary_condition=:periodic
-write_gauge_pair_bonds_freq=0
+# Write gauge-covariant bond pairing every 5 sweeps. Set to 0 to disable.
+write_gauge_pair_bonds_freq=5
 allow_gauge_dependent_spectra=false
 
 # 5. HMC参数
