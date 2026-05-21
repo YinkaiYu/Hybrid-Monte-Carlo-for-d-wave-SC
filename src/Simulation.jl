@@ -15,6 +15,31 @@ function calc_optimal_dt(β, V, mass, Nt)
     return T / (2 * Nt) 
 end
 
+function round_even_nt(x::Real)
+    return 2 * round(Int, x / 2)
+end
+
+function adjust_thermalization_nt(Nt_current::Int, rate::Real; Nt_min::Int, Nt_max::Int)
+    Nt_min > 0 || error("Nt_min must be positive")
+    Nt_max >= Nt_min || error("Nt_max must be >= Nt_min")
+
+    Nt_next = if rate <= 0.0
+        Nt_current + 6
+    elseif rate < 0.30
+        Nt_current + 4
+    elseif rate < 0.55
+        Nt_current + 2
+    elseif rate <= 0.85
+        Nt_current
+    elseif rate <= 0.95
+        Nt_current - 4
+    else
+        round_even_nt(0.65 * Nt_current)
+    end
+
+    return clamp(Nt_next, Nt_min, Nt_max)
+end
+
 mutable struct MuRootTracker
     has_prev::Bool
     μ_prev::Float64
@@ -386,6 +411,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
     # 用于计算接受率窗口
     acc_window = 5
     recent_acc = 0
+    Nt_min = Nt_measure
+    Nt_max = max(40, Nt_min)
     μ_tracker = MuRootTracker()
     
     start_time = time()
@@ -401,12 +428,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
             
             old_Nt = Nt_current
             
-            # 目标接受率区间: [0.60, 0.85]
-            if rate < 0.60
-                Nt_current += 2 # 步子太大了，多切几份
-            elseif rate > 0.95 && Nt_current > 4
-                Nt_current -= 2 # 步子太小了，浪费算力
-            end
+            Nt_current = adjust_thermalization_nt(Nt_current, rate; Nt_min=Nt_min, Nt_max=Nt_max)
             
             if Nt_current != old_Nt
                 dt_current = calc_optimal_dt(p.β, p.V, p.mass, Nt_current)
