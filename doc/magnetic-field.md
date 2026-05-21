@@ -2,6 +2,65 @@
 
 本文档记录当前有限轨道磁场版本的输入、规范约定和可观测量解释。第一版只支持环面上的 magnetic periodic boundary condition (magnetic PBC)，还没有实现磁性元胞、magnetic Bloch theorem、Hall conductivity 或 magnetic-translation-covariant momentum spectra。
 
+## 磁场如何进入晶格模型
+
+我们在 $L_x\times L_y$ 的有限晶格环面上加入均匀轨道磁场。输入参数
+$n_{\rm flux}^{\rm sc}$ 表示穿过整个模拟元胞的超导磁通量子数：
+$$
+\Phi_{\rm tot}=n_{\rm flux}^{\rm sc}\Phi_0^{\rm sc},
+\qquad
+\Phi_0^{\rm sc}=\frac{hc}{2e}.
+$$
+因为 BdG normal hopping 中运动的是电子，一个超导磁通量子对应电子环路相位
+$\pi$。因此每个 plaquette 上的电子 Peierls 相位为
+$$
+\alpha=\frac{\pi n_{\rm flux}^{\rm sc}}{L_xL_y}.
+$$
+
+磁场只通过 normal hopping 的 Peierls 替换进入单粒子 Hamiltonian：
+$$
+h_{ij}(B)=-t_{ij}U_{ij}+(w_i-\mu)\delta_{ij},
+\qquad
+U_{ij}=\exp(i\varphi_{ij}),
+\qquad
+\varphi_{ij}=\int_i^j {\bf A}\cdot d{\bf l},
+$$
+其中单位和符号按程序的 Peierls 相位约定吸收到 $\varphi_{ij}$ 中。BdG pairing
+block 仍直接使用采样到的裸 $\Delta_{ij}$，不额外乘 Peierls 相位。
+
+规范选择为 Landau gauge。用 0-based 坐标
+$x=0,\ldots,L_x-1$、$y=0,\ldots,L_y-1$ 记格点，取
+$$
+A_x=0,\qquad A_y=Bx.
+$$
+对应的最近邻 link phase 是
+$$
+U_y(x,y)=e^{i\alpha x},\qquad
+U_x(x,y)=1\quad (x<L_x-1).
+$$
+为了在有限环面上保持每个 plaquette 都有同一个磁通，跨过 $x$ 边界的 hopping
+需要乘一个 magnetic PBC patch：
+$$
+U_x(L_x-1,y)=e^{-i\alpha L_x y}.
+$$
+这等价于把电子场按
+$$
+c_{x+L_x,y}=e^{-i\alpha L_x y}c_{x,y},
+\qquad
+c_{x,y+L_y}=c_{x,y}
+$$
+做磁周期性识别。沿 $x$、$y$ 两个方向绕环面的顺序应当给出同一个结果，因此需要
+$$
+e^{-i\alpha L_xL_y}=e^{-i\pi n_{\rm flux}^{\rm sc}}=1.
+$$
+这就是当前实现要求 $n_{\rm flux}^{\rm sc}$ 为偶数的原因。现在支持的有限磁场通量为
+$$
+n_{\rm flux}^{\rm sc}=\pm 2,\pm 4,\pm 6,\ldots,
+$$
+符号表示磁场方向；$n_{\rm flux}^{\rm sc}=0$ 是零场情形。实际运行时，非零通量必须配合
+`boundary_condition=:magnetic_pbc`；零场也可以继续使用普通周期边界。奇数个超导磁通量子以及磁性元胞或 magnetic Bloch theorem
+还没有实现。
+
 ## 输入参数
 
 用户通过 `n_flux_sc::Int` 指定穿过完整 $L_x \times L_y$ 模拟元胞的超导磁通量子数，单位是 $hc/2e$。在当前模型语境下，它也就是期望的 vortex number。`n_vortices` 只是输入别名；元数据、JLD2 和后处理约定统一使用 `n_flux_sc`。
