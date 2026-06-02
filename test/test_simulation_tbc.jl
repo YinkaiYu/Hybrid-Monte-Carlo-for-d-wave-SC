@@ -65,6 +65,7 @@ end
                 @test file["spectra_Lx_eff"] == 4
                 @test file["spectra_Ly_eff"] == 4
                 @test file["multi_eta_enabled"] == true
+                @test file["write_ldos_spectrum"] == false
                 @test file["spectra_eta_factors"] == DwaveHMC.DEFAULT_SPECTRA_ETA_FACTORS
                 @test file["eta_values"] == 0.25 .* DwaveHMC.DEFAULT_SPECTRA_ETA_FACTORS
                 @test file["spectra_eta_base"] == 0.25
@@ -104,6 +105,8 @@ end
                 @test g["A_XG_path"] == g["A_XG_path_eta"][1, :, :]
                 @test length(g["LDOS_0"]) == 16
                 @test size(g["A_k0"]) == (4, 4)
+                @test !haskey(g, "LDOS")
+                @test !haskey(g, "LDOS_eta")
                 @test !haskey(g, "dos_M_patch")
                 @test !haskey(g, "dos_AN")
                 @test !haskey(g, "dos_AN_patch")
@@ -147,6 +150,8 @@ end
                 @test size(g["A_XG_node_patch"]) == size(g["A_XG_path"])
                 @test haskey(g, "dos_M")
                 @test haskey(g, "LDOS_0")
+                @test !haskey(g, "LDOS")
+                @test !haskey(g, "LDOS_eta")
                 @test haskey(g, "dos_M_patch")
                 @test haskey(g, "A_XG_node_patch")
                 @test haskey(g, "dos_M_patch_eta")
@@ -162,6 +167,49 @@ end
                 @test length(g["LDOS_0"]) == 16
                 @test length(g["dos_M_patch"]) == length(g["dos"])
                 @test length(g["dos"]) == length(file["dos_omega_grid"])
+            end
+        end
+    end
+
+    @testset "write_ldos_spectrum stores full site-resolved spectra" begin
+        mktempdir() do out_dir
+            spectra_path = run_tiny_spectra_simulation(tiny_simulation_parameters(), out_dir;
+                                                       use_twisted_spectra=false,
+                                                       spectra_eta_factors=[1.0, 2.0],
+                                                       write_ldos_spectrum=true)
+
+            jldopen(spectra_path, "r") do file
+                @test file["write_ldos_spectrum"] == true
+                @test file["ldos_spectrum_grid_key"] == "dos_omega_grid"
+                nω = length(file["dos_omega_grid"])
+                g = file["sweep_1"]
+                @test haskey(g, "LDOS")
+                @test haskey(g, "LDOS_eta")
+                @test size(g["LDOS"]) == (16, nω)
+                @test size(g["LDOS_eta"]) == (2, 16, nω)
+                @test g["LDOS"] == g["LDOS_eta"][1, :, :]
+                @test all(isfinite, g["LDOS"])
+                @test all(isfinite, g["LDOS_eta"])
+            end
+        end
+    end
+
+    @testset "write_ldos_spectrum works with TBC spectra" begin
+        mktempdir() do out_dir
+            spectra_path = run_tiny_spectra_simulation(tiny_simulation_parameters(), out_dir;
+                                                       use_twisted_spectra=true,
+                                                       spectra_Ltw=2,
+                                                       spectra_eta_factors=[1.0, 2.0],
+                                                       write_ldos_spectrum=true)
+
+            jldopen(spectra_path, "r") do file
+                @test file["write_ldos_spectrum"] == true
+                nω = length(file["dos_omega_grid"])
+                g = file["sweep_1"]
+                @test size(g["LDOS"]) == (16, nω)
+                @test size(g["LDOS_eta"]) == (2, 16, nω)
+                @test g["LDOS"] == g["LDOS_eta"][1, :, :]
+                @test all(isfinite, g["LDOS"])
             end
         end
     end

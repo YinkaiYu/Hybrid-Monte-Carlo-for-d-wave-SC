@@ -96,6 +96,7 @@ function collect_sweep_data(file; eta_factor=1)
     list_dos_M = Vector{Vector{Float64}}()
     list_dos_M_patch = Vector{Vector{Float64}}()
     list_ldos0 = Vector{Vector{Float64}}()
+    list_ldos = Vector{Matrix{Float64}}()
     list_ak = Vector{Matrix{Float64}}()
     list_mx_path = Vector{Matrix{Float64}}()
     list_xg_path = Vector{Matrix{Float64}}()
@@ -126,6 +127,9 @@ function collect_sweep_data(file; eta_factor=1)
             if haskey(g, "LDOS_0") || haskey(g, "LDOS_0_eta")
                 push!(list_ldos0, selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx))
             end
+            if haskey(g, "LDOS") || haskey(g, "LDOS_eta")
+                push!(list_ldos, selected_matrix(g, "LDOS_eta", "LDOS", eta_idx))
+            end
             ak = selected_matrix_any(g, ak_pairs, eta_idx)
             mx_path = selected_matrix_any(g, mx_pairs, eta_idx)
             xg_path = selected_matrix_any(g, xg_pairs, eta_idx)
@@ -147,6 +151,7 @@ function collect_sweep_data(file; eta_factor=1)
             dos_M=list_dos_M,
             dos_M_patch=list_dos_M_patch,
             ldos0=list_ldos0,
+            ldos=list_ldos,
             ak=list_ak,
             mx_path=list_mx_path,
             xg_path=list_xg_path,
@@ -219,6 +224,15 @@ function process_single_directory(target_dir; eta_factor=1)
                            mean_ldos0, err_ldos0, params.Lx, params.Ly)
         else
             rm(joinpath(target_dir, "processed_ldos0.csv"); force=true)
+        end
+
+        if length(data.ldos) == data.count
+            mean_ldos, err_ldos = calc_stats(data.ldos)
+            write_ldos_spectrum_csv(joinpath(target_dir, "processed_ldos.csv"),
+                                    mean_ldos, err_ldos, meta.dos_omega_grid,
+                                    params.Lx, params.Ly)
+        else
+            rm(joinpath(target_dir, "processed_ldos.csv"); force=true)
         end
 
         if length(data.ak) == data.count

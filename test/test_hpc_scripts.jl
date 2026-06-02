@@ -27,10 +27,12 @@ end
     @test occursin("boundary_condition=:periodic", script)
     @test occursin("write_gauge_pair_bonds_freq=5", script)
     @test occursin("allow_gauge_dependent_spectra=false", script)
+    @test occursin("write_ldos_spectrum=false", script)
     @test occursin("n_flux_sc = \$n_flux_sc", script)
     @test occursin("boundary_condition = \$boundary_condition", script)
     @test occursin("write_gauge_pair_bonds_freq = \$write_gauge_pair_bonds_freq", script)
     @test occursin("allow_gauge_dependent_spectra = \$allow_gauge_dependent_spectra", script)
+    @test occursin("write_ldos_spectrum = \$write_ldos_spectrum", script)
     @test length(findall("n_flux_sc=n_flux_sc, boundary_condition=boundary_condition", script)) == 2
     @test occursin("JOB_TAG=\"n\${target_n}_Nv\${n_flux_sc}\"", script)
     @test occursin("JOB_TAG=\"m\${mu}_Nv\${n_flux_sc}\"", script)
@@ -45,14 +47,17 @@ end
     @test occursin("spectra_eta_factors=spectra_eta_factors", script)
     @test occursin("write_gauge_pair_bonds_freq = isdefined(@__MODULE__, :write_gauge_pair_bonds_freq) ? getfield(@__MODULE__, :write_gauge_pair_bonds_freq) : 0", script)
     @test occursin("allow_gauge_dependent_spectra = isdefined(@__MODULE__, :allow_gauge_dependent_spectra) ? getfield(@__MODULE__, :allow_gauge_dependent_spectra) : false", script)
+    @test occursin("write_ldos_spectrum = isdefined(@__MODULE__, :write_ldos_spectrum) ? getfield(@__MODULE__, :write_ldos_spectrum) : false", script)
     @test occursin(raw"Magnetic options: n_flux_sc=$(p.n_flux_sc), boundary_condition=$(p.boundary_condition)", script)
     @test occursin(raw"write_gauge_pair_bonds_freq=$(write_gauge_pair_bonds_freq)", script)
     @test occursin(raw"allow_gauge_dependent_spectra=$(allow_gauge_dependent_spectra)", script)
+    @test occursin(raw"write_ldos_spectrum=$(write_ldos_spectrum)", script)
     @test occursin("worker_task(seed, p,", script)
-    @test occursin("allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq)", script)
+    @test occursin("allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq,\n                                 write_ldos_spectrum)", script)
     @test occursin("allow_gauge_dependent_spectra=allow_gauge_dependent_spectra", script)
     @test occursin("write_gauge_pair_bonds_freq=write_gauge_pair_bonds_freq", script)
-    @test occursin("measure_twist, twist_Ax, twist_qy,\n                allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq)", script)
+    @test occursin("write_ldos_spectrum=write_ldos_spectrum", script)
+    @test occursin("measure_twist, twist_Ax, twist_qy,\n                allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq,\n                write_ldos_spectrum)", script)
 end
 
 @testset "run_conf executes with default magnetic optional params" begin
@@ -117,8 +122,10 @@ p.n_flux_sc == n_flux_sc || error("n_flux_sc mismatch")
 p.boundary_condition == boundary_condition || error("boundary_condition mismatch")
 isdefined(@__MODULE__, :write_gauge_pair_bonds_freq) || error("missing write_gauge_pair_bonds_freq")
 isdefined(@__MODULE__, :allow_gauge_dependent_spectra) || error("missing allow_gauge_dependent_spectra")
+isdefined(@__MODULE__, :write_ldos_spectrum) || error("missing write_ldos_spectrum")
 write_gauge_pair_bonds_freq == 5 || error("unexpected write_gauge_pair_bonds_freq")
 allow_gauge_dependent_spectra == false || error("unexpected allow_gauge_dependent_spectra")
+write_ldos_spectrum == false || error("unexpected write_ldos_spectrum")
 """
         @test success(julia_cmd("--project=$(REPO_ROOT)", "-e", check; dir=tmp))
     end

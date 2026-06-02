@@ -57,7 +57,8 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                                  use_twisted_spectra=true,
                                  spectra_Ltw=2,
                                  momentum_mode=:old,
-                                 multi_eta=true)
+                                 multi_eta=true,
+                                 include_ldos_spectrum=false)
     momentum_mode in (:old, :diagnostic, :none) ||
         error("unknown momentum_mode=$momentum_mode")
     include_momentum = momentum_mode !== :none
@@ -74,6 +75,7 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
         file["spectra_Ly_eff"] = effective[2]
         file["spectra_eta"] = 0.125
         file["spectra_delta_omega"] = 0.25
+        file["write_ldos_spectrum"] = include_ldos_spectrum
         file["m_point_patch_half_width"] = 0.5
         file["mx_path_kx"] = pi
         file["mx_path_ky"] = mx_ky
@@ -102,6 +104,10 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                 file["$prefix/dos_M_patch"] = [10.0, 20.0, 30.0] .+ offset .+ sweep
             end
             file["$prefix/LDOS_0"] = collect(1.0:4.0) .+ offset .+ sweep
+            if include_ldos_spectrum
+                file["$prefix/LDOS"] = reshape(collect(1.0:(4 * length(dos_grid))),
+                                               4, length(dos_grid)) .+ offset .+ sweep
+            end
             if include_momentum
                 ak_key = diagnostic_momentum ? "A_k_omega0_landau_gauge_diagnostic" : "A_k0"
                 mx_key = diagnostic_momentum ? "A_MX_path_landau_gauge_diagnostic" : "A_MX_path"
@@ -124,6 +130,8 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                 dos_base = [3.0, 4.0, 5.0] .+ offset .+ sweep
                 dos_M_base = [6.0, 7.0, 8.0] .+ offset .+ sweep
                 ldos_base = collect(1.0:4.0) .+ offset .+ sweep
+                ldos_spectrum_base = reshape(collect(1.0:(4 * length(dos_grid))),
+                                             4, length(dos_grid)) .+ offset .+ sweep
                 ak_base = reshape(collect(1.0:prod(effective)), effective) .+ offset .+ sweep
                 mx_base = mx_path .+ offset .+ sweep
                 xg_base = xg_path .+ offset .+ sweep
@@ -140,6 +148,9 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                     file["$prefix/dos_M_patch_eta"] = stack_eta_vector([10.0, 20.0, 30.0] .+ offset .+ sweep)
                 end
                 file["$prefix/LDOS_0_eta"] = stack_eta_vector(ldos_base)
+                if include_ldos_spectrum
+                    file["$prefix/LDOS_eta"] = stack_eta_matrix(ldos_spectrum_base)
+                end
                 if include_momentum
                     ak_eta_key = diagnostic_momentum ? "A_k_omega0_eta_landau_gauge_diagnostic" : "A_k0_eta"
                     mx_eta_key = diagnostic_momentum ? "A_MX_path_eta_landau_gauge_diagnostic" : "A_MX_path_eta"
@@ -238,6 +249,20 @@ end
         @test csv_data_rows(joinpath(target_dir, "processed_ldos0.csv")) == 4
         @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 8.0
         @test first_data_value(joinpath(target_dir, "processed_dos_node.csv"), 2) == 6.0
+        @test !isfile(joinpath(target_dir, "processed_ldos.csv"))
+    end
+end
+
+@testset "process_spectra.jl exports optional LDOS spectra" begin
+    mktempdir() do root
+        target_dir = joinpath(root, PROCESS_TARGET_REL)
+        write_synthetic_spectra(target_dir; nsweeps=1, include_ldos_spectrum=true)
+        Base.invokelatest(ProcessSpectraScript.process_spectra_directory, target_dir)
+
+        @test header(joinpath(target_dir, "processed_ldos.csv")) == "x,y,site,omega,LDOS,Error"
+        @test csv_data_rows(joinpath(target_dir, "processed_ldos.csv")) == 4 * 3
+        @test first_data_value(joinpath(target_dir, "processed_ldos.csv"), 4) == -2.0
+        @test first_data_value(joinpath(target_dir, "processed_ldos.csv"), 5) == 2.0
     end
 end
 
@@ -301,6 +326,18 @@ end
     end
 end
 
+@testset "batch_process_spectra.jl exports optional LDOS spectra" begin
+    mktempdir() do root
+        root_dir = joinpath(root, BATCH_ROOT_REL)
+        target_dir = joinpath(root_dir, "T_0.10")
+        write_synthetic_spectra(target_dir; nsweeps=1, include_ldos_spectrum=true)
+        Base.invokelatest(BatchProcessSpectraScript.process_single_directory, target_dir)
+
+        @test header(joinpath(target_dir, "processed_ldos.csv")) == "x,y,site,omega,LDOS,Error"
+        @test csv_data_rows(joinpath(target_dir, "processed_ldos.csv")) == 4 * 3
+    end
+end
+
 @testset "batch_process_spectra.jl accepts untwisted Ltw1 spectra without patch fields" begin
     mktempdir() do root
         root_dir = joinpath(root, BATCH_ROOT_REL)
@@ -361,22 +398,31 @@ end
 @testset "projectHPC batch processor M, antinode, and node outputs" begin
     mktempdir() do root
         t_dir = joinpath(root, "T_0.10")
-        write_synthetic_spectra(joinpath(t_dir, "conf_001"); offset=0.0, nsweeps=1)
-        write_synthetic_spectra(joinpath(t_dir, "conf_002"); offset=10.0, nsweeps=1)
+        write_synthetic_spectra(joinpath(t_dir, "conf_001");
+                                offset=0.0,
+                                nsweeps=1,
+                                include_ldos_spectrum=true)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002");
+                                offset=10.0,
+                                nsweeps=1,
+                                include_ldos_spectrum=true)
         Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
 
         @test csv_data_rows(joinpath(t_dir, "spectra_ak0.csv")) == 16
         @test isfile(joinpath(t_dir, "spectra_dos_M_patch.csv"))
         @test isfile(joinpath(t_dir, "spectra_ldos0.csv"))
+        @test isfile(joinpath(t_dir, "spectra_ldos.csv"))
         @test isfile(joinpath(t_dir, "spectra_dos_AN.csv"))
         @test isfile(joinpath(t_dir, "spectra_dos_node.csv"))
         @test isfile(joinpath(t_dir, "spectra_MX_path.csv"))
         @test isfile(joinpath(t_dir, "spectra_XG_path.csv"))
         @test csv_data_rows(joinpath(t_dir, "spectra_ldos0.csv")) == 4
+        @test csv_data_rows(joinpath(t_dir, "spectra_ldos.csv")) == 4 * 3
         @test isfile(joinpath(t_dir, "spectra_path_peaks.csv"))
         @test header(joinpath(t_dir, "spectra_dos.csv")) == "omega,DOS,DOS_Error,DOS_M,DOS_M_Error"
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 1) == -2.0
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 9.0
+        @test first_data_value(joinpath(t_dir, "spectra_ldos.csv"), 5) == 7.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 13.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_node.csv"), 2) == 114.0
     end

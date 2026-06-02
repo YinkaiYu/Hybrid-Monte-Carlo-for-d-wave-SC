@@ -166,7 +166,8 @@ end
                    twist_Ax::Float64=1e-3,
                    twist_qy::Float64=2π/p.Ly,
                    allow_gauge_dependent_spectra::Bool=false,
-                   write_gauge_pair_bonds_freq::Int=0)
+                   write_gauge_pair_bonds_freq::Int=0,
+                   write_ldos_spectrum::Bool=false)
 
 运行完整的 HMC 模拟。
 
@@ -187,6 +188,7 @@ end
 - `twist_qy`: 横向调制 twist 的动量，默认 `2π/Ly`
 - `allow_gauge_dependent_spectra`: 有限轨道磁场下是否显式输出 Landau gauge 诊断动量谱；默认关闭
 - `write_gauge_pair_bonds_freq`: 每隔多少个测量步向 pairing_scatter.jld2 写出规范协变 bond 配对数组；`0` 表示关闭
+- `write_ldos_spectrum`: 是否输出完整 LDOS(ω) 谱；默认关闭以避免 JLD2 文件过大
 """
 function run_simulation(p::ModelParameters, out_dir::String; 
                         n_therm::Int=100, 
@@ -206,6 +208,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                         twist_qy::Float64=2π / p.Ly,
                         allow_gauge_dependent_spectra::Bool=false,
                         write_gauge_pair_bonds_freq::Int=0,
+                        write_ldos_spectrum::Bool=false,
                         verbose::Bool=true)
     
     # --- 1. 环境准备 ---
@@ -292,6 +295,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
         tee_println("Spectra finite-field mode: gauge_dependent_spectra=$gauge_dependent_spectra, gauge=$spectra_gauge")
     end
     tee_println("Spectra eta factors: $(actual_spectra_eta_factors)")
+    tee_println("LDOS spectrum output: write_ldos_spectrum=$write_ldos_spectrum")
     if use_twisted_spectra
         tee_println("Spectra TBC: m_point_patch_half_width=$m_point_patch_half_width, spectra_eta=$actual_spectra_eta, spectra_delta_omega=$actual_spectra_delta_omega")
     end
@@ -347,6 +351,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 transport_eta_values=actual_transport_eta_values,
                 transport_eta_base=p.η,
                 spectra_delta_omega=actual_spectra_delta_omega,
+                write_ldos_spectrum=write_ldos_spectrum,
+                ldos_spectrum_grid_key="dos_omega_grid",
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
                 mx_path_kx=mx_path_kx,
@@ -388,6 +394,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 transport_eta_values=actual_transport_eta_values,
                 transport_eta_base=p.η,
                 spectra_delta_omega=actual_spectra_delta_omega,
+                write_ldos_spectrum=write_ldos_spectrum,
+                ldos_spectrum_grid_key="dos_omega_grid",
                 omega_grid=omega_grid,
                 dos_omega_grid=dos_omega_grid,
                 mx_path_kx=mx_kx_val,
@@ -471,6 +479,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_dos_M = nothing
     accum_dos_M_patch = nothing
     accum_ldos0 = Vector{Float64}()
+    accum_ldos = nothing
     accum_Ak0 = nothing
     accum_AMXpath = nothing
     accum_AXGpath = nothing
@@ -481,6 +490,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_dos_M_eta = nothing
     accum_dos_M_patch_eta = nothing
     accum_ldos0_eta = Matrix{Float64}(undef, 0, 0)
+    accum_ldos_eta = nothing
     accum_Ak0_eta = nothing
     accum_AMXpath_eta = nothing
     accum_AXGpath_eta = nothing
@@ -538,7 +548,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                                       spectra_eta=actual_spectra_eta,
                                                       spectra_delta_omega=actual_spectra_delta_omega,
                                                       eta_values=actual_spectra_eta_values,
-                                                      reuse_buffers=false)
+                                                      reuse_buffers=false,
+                                                      write_ldos_spectrum=write_ldos_spectrum)
                 spec_res = SpectrumResult(transport_res.superfluid_stiffness,
                                           transport_res.dc_conductivity,
                                           transport_res.ω_grid,
@@ -557,7 +568,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                           twisted_res.ldos_ω0_eta,
                                           twisted_res.A_k_ω0_eta,
                                           twisted_res.A_MX_path_eta,
-                                          twisted_res.A_XG_path_eta)
+                                          twisted_res.A_XG_path_eta,
+                                          twisted_res.ldos_ω,
+                                          twisted_res.ldos_ω_eta)
                 spec_dos_M_patch = twisted_res.dos_M_patch
                 spec_xg_node_patch = twisted_res.A_XG_node_patch
                 spec_dos_M_patch_eta = twisted_res.dos_M_patch_eta
@@ -566,7 +579,8 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spec_res = measure_transport_and_spectra(cache, p;
                                                          eta_values=actual_spectra_eta_values,
                                                          reuse_buffers=true,
-                                                         include_momentum_spectra=include_momentum_spectra)
+                                                         include_momentum_spectra=include_momentum_spectra,
+                                                         write_ldos_spectrum=write_ldos_spectrum)
                 spec_dos_M_patch = nothing
                 spec_xg_node_patch = nothing
                 spec_dos_M_patch_eta = nothing
@@ -602,6 +616,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_dos_M = spec_res.dos_M === nothing ? nothing : copy(spec_res.dos_M)
                 accum_dos_M_patch = spec_dos_M_patch === nothing ? nothing : copy(spec_dos_M_patch)
                 accum_ldos0 = copy(spec_res.ldos_ω0)
+                accum_ldos = spec_res.ldos_ω === nothing ? nothing : copy(spec_res.ldos_ω)
                 accum_Ak0 = spec_res.A_k_ω0 === nothing ? nothing : copy(spec_res.A_k_ω0)
                 accum_AMXpath = spec_res.A_MX_path === nothing ? nothing : copy(spec_res.A_MX_path)
                 accum_AXGpath = spec_res.A_XG_path === nothing ? nothing : copy(spec_res.A_XG_path)
@@ -612,6 +627,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_dos_M_eta = spec_res.dos_M_eta === nothing ? nothing : copy(spec_res.dos_M_eta)
                 accum_dos_M_patch_eta = spec_dos_M_patch_eta === nothing ? nothing : copy(spec_dos_M_patch_eta)
                 accum_ldos0_eta = copy(spec_res.ldos_ω0_eta)
+                accum_ldos_eta = spec_res.ldos_ω_eta === nothing ? nothing : copy(spec_res.ldos_ω_eta)
                 accum_Ak0_eta = spec_res.A_k_ω0_eta === nothing ? nothing : copy(spec_res.A_k_ω0_eta)
                 accum_AMXpath_eta = spec_res.A_MX_path_eta === nothing ? nothing : copy(spec_res.A_MX_path_eta)
                 accum_AXGpath_eta = spec_res.A_XG_path_eta === nothing ? nothing : copy(spec_res.A_XG_path_eta)
@@ -625,6 +641,14 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_dos_eta .+= spec_res.dos_eta
                 accum_ldos0 .+= spec_res.ldos_ω0
                 accum_ldos0_eta .+= spec_res.ldos_ω0_eta
+                if spec_res.ldos_ω !== nothing
+                    accum_ldos === nothing && error("LDOS spectrum accumulator missing")
+                    accum_ldos .+= spec_res.ldos_ω
+                end
+                if spec_res.ldos_ω_eta !== nothing
+                    accum_ldos_eta === nothing && error("LDOS_eta spectrum accumulator missing")
+                    accum_ldos_eta .+= spec_res.ldos_ω_eta
+                end
                 if spec_res.dos_M !== nothing
                     accum_dos_M === nothing && error("dos_M accumulator missing for momentum spectra")
                     accum_dos_M .+= spec_res.dos_M
@@ -686,6 +710,12 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_dos_eta ./= bin_count
                 accum_ldos0 ./= bin_count
                 accum_ldos0_eta ./= bin_count
+                if accum_ldos !== nothing
+                    accum_ldos ./= bin_count
+                end
+                if accum_ldos_eta !== nothing
+                    accum_ldos_eta ./= bin_count
+                end
                 if accum_dos_M !== nothing
                     accum_dos_M ./= bin_count
                 end
@@ -748,6 +778,12 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     end
                     g["LDOS_0"] = accum_ldos0
                     g["LDOS_0_eta"] = accum_ldos0_eta
+                    if accum_ldos !== nothing
+                        g["LDOS"] = accum_ldos
+                    end
+                    if accum_ldos_eta !== nothing
+                        g["LDOS_eta"] = accum_ldos_eta
+                    end
                     if accum_Ak0 !== nothing
                         g[Ak0_key] = accum_Ak0
                     end

@@ -13,6 +13,7 @@ const SPECTRA_OUTPUT_FILES = [
     "spectra_dos_M.csv",
     "spectra_dos_M_patch.csv",
     "spectra_ldos0.csv",
+    "spectra_ldos.csv",
     "spectra_ak0.csv",
     "spectra_MX_path.csv",
     "spectra_XG_path.csv",
@@ -203,6 +204,8 @@ function process_single_config(jld_path; eta_factor=1)
             sum_xg_path = first_xg_path === nothing ? nothing : copy(first_xg_path)
             has_ldos0 = haskey(g1, "LDOS_0") || haskey(g1, "LDOS_0_eta")
             sum_ldos0 = has_ldos0 ? copy(selected_vector(g1, "LDOS_0_eta", "LDOS_0", eta_idx)) : nothing
+            has_ldos = haskey(g1, "LDOS") || haskey(g1, "LDOS_eta")
+            sum_ldos = has_ldos ? copy(selected_matrix(g1, "LDOS_eta", "LDOS", eta_idx)) : nothing
             has_node_patch = haskey(g1, "A_XG_node_patch") || haskey(g1, "A_XG_node_patch_eta")
             node_source_key = has_node_patch ? "A_XG_node_patch" : "A_XG_path"
             node_multi_key = has_node_patch ? "A_XG_node_patch_eta" : "A_XG_path_eta"
@@ -243,6 +246,9 @@ function process_single_config(jld_path; eta_factor=1)
                 if (haskey(g, "LDOS_0") || haskey(g, "LDOS_0_eta")) != has_ldos0
                     error("Incompatible spectra config: LDOS_0 presence changes across sweeps")
                 end
+                if (haskey(g, "LDOS") || haskey(g, "LDOS_eta")) != has_ldos
+                    error("Incompatible spectra config: LDOS presence changes across sweeps")
+                end
                 if (haskey(g, "dc_cond_eta") || haskey(g, "dc_cond")) != has_dc
                     error("Incompatible spectra config: dc_cond presence changes across sweeps")
                 end
@@ -266,6 +272,9 @@ function process_single_config(jld_path; eta_factor=1)
                 if has_ldos0
                     sum_ldos0 .+= require_same_shape("LDOS_0", selected_vector(g, "LDOS_0_eta", "LDOS_0", eta_idx), sum_ldos0)
                 end
+                if has_ldos
+                    sum_ldos .+= require_same_shape("LDOS", selected_matrix(g, "LDOS_eta", "LDOS", eta_idx), sum_ldos)
+                end
                 if sum_node_path !== nothing
                     node_path = has_node_patch ? selected_matrix(g, node_multi_key, node_source_key, eta_idx) : sweep_xg_path
                     sum_node_path .+= require_same_shape(node_source_key, node_path, sum_node_path)
@@ -283,6 +292,7 @@ function process_single_config(jld_path; eta_factor=1)
                    dos_M_patch=has_patch ? (sum_dos_M_patch ./ count) : nothing,
                    ak0=sum_ak === nothing ? nothing : (sum_ak ./ count),
                    ldos0=has_ldos0 ? (sum_ldos0 ./ count) : nothing,
+                   ldos=has_ldos ? (sum_ldos ./ count) : nothing,
                    mx_path=sum_mx_path === nothing ? nothing : (sum_mx_path ./ count),
                    xg_path=sum_xg_path === nothing ? nothing : (sum_xg_path ./ count),
                    node_path=sum_node_path === nothing ? nothing : (sum_node_path ./ count),
@@ -297,6 +307,7 @@ function process_single_config(jld_path; eta_factor=1)
                (res.dos_M !== nothing && any(isnan, res.dos_M)) ||
                (res.ak0 !== nothing && any(isnan, res.ak0)) ||
                (res.ldos0 !== nothing && any(isnan, res.ldos0)) ||
+               (res.ldos !== nothing && any(isnan, res.ldos)) ||
                (res.mx_path !== nothing && any(isnan, res.mx_path)) ||
                (res.xg_path !== nothing && any(isnan, res.xg_path)) ||
                (res.node_path !== nothing && any(isnan, res.node_path)) ||
@@ -336,6 +347,7 @@ function compatibility_signature(res)
         dos_M_patch_size=res.dos_M_patch === nothing ? nothing : size(res.dos_M_patch),
         ak0_size=res.ak0 === nothing ? nothing : size(res.ak0),
         ldos0_size=res.ldos0 === nothing ? nothing : size(res.ldos0),
+        ldos_size=res.ldos === nothing ? nothing : size(res.ldos),
         mx_path_size=res.mx_path === nothing ? nothing : size(res.mx_path),
         xg_path_size=res.xg_path === nothing ? nothing : size(res.xg_path),
         node_path_size=res.node_path === nothing ? nothing : size(res.node_path),
@@ -380,6 +392,7 @@ function process_T_directory(dir_path; eta_factor=1)
     samples_dos_M_patch = []
     samples_ak = []
     samples_ldos0 = []
+    samples_ldos = []
     samples_mx_path = []
     samples_xg_path = []
     samples_node_path = []
@@ -429,6 +442,9 @@ function process_T_directory(dir_path; eta_factor=1)
         end
         if res.ldos0 !== nothing
             push!(samples_ldos0, res.ldos0)
+        end
+        if res.ldos !== nothing
+            push!(samples_ldos, res.ldos)
         end
         if res.mx_path !== nothing
             push!(samples_mx_path, res.mx_path)
@@ -536,6 +552,15 @@ function process_T_directory(dir_path; eta_factor=1)
                        reference_params.Lx, reference_params.Ly)
     else
         rm(joinpath(dir_path, "spectra_ldos0.csv"); force=true)
+    end
+
+    if length(samples_ldos) == real_n
+        final_ldos, err_ldos = calc_stats(samples_ldos)
+        write_ldos_spectrum_csv(joinpath(dir_path, "spectra_ldos.csv"),
+                                final_ldos, err_ldos, dos_omega_grid,
+                                reference_params.Lx, reference_params.Ly)
+    else
+        rm(joinpath(dir_path, "spectra_ldos.csv"); force=true)
     end
 
     mx_kx = fill(meta["mx_path_kx"], length(meta["mx_path_ky"]))

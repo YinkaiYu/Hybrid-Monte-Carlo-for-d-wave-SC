@@ -66,12 +66,14 @@ actual_spectra_eta_factors = isdefined(@__MODULE__, :spectra_eta_factors) ?
                              DwaveHMC.DEFAULT_SPECTRA_ETA_FACTORS
 write_gauge_pair_bonds_freq = isdefined(@__MODULE__, :write_gauge_pair_bonds_freq) ? getfield(@__MODULE__, :write_gauge_pair_bonds_freq) : 0
 allow_gauge_dependent_spectra = isdefined(@__MODULE__, :allow_gauge_dependent_spectra) ? getfield(@__MODULE__, :allow_gauge_dependent_spectra) : false
+write_ldos_spectrum = isdefined(@__MODULE__, :write_ldos_spectrum) ? getfield(@__MODULE__, :write_ldos_spectrum) : false
 
 println("Parameters loaded. T = $(T), Total Configs = $(N_conf)")
 flush(stdout)
 
 println("Spectra options: use_twisted_spectra=$(use_twisted_spectra), spectra_Ltw=$(spectra_Ltw), spectra_eta=$(spectra_eta), spectra_delta_omega=$(spectra_delta_omega)")
 println("Spectra eta factors: $(actual_spectra_eta_factors)")
+println("LDOS spectrum output: write_ldos_spectrum=$(write_ldos_spectrum)")
 println("Twist stiffness options: measure_twist=$(measure_twist), twist_Ax=$(twist_Ax), twist_qy=$(twist_qy)")
 println("Magnetic options: n_flux_sc=$(p.n_flux_sc), boundary_condition=$(p.boundary_condition), write_gauge_pair_bonds_freq=$(write_gauge_pair_bonds_freq), allow_gauge_dependent_spectra=$(allow_gauge_dependent_spectra)")
 flush(stdout)
@@ -88,7 +90,8 @@ flush(stdout)
                                  spectra_eta, spectra_delta_omega,
                                  spectra_eta_factors,
                                  measure_twist, twist_Ax, twist_qy,
-                                 allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq)
+                                 allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq,
+                                 write_ldos_spectrum)
     out_dir = "conf_$(seed)"
     Random.seed!(seed)
     
@@ -116,6 +119,7 @@ flush(stdout)
                        twist_qy=twist_qy,
                        allow_gauge_dependent_spectra=allow_gauge_dependent_spectra,
                        write_gauge_pair_bonds_freq=write_gauge_pair_bonds_freq,
+                       write_ldos_spectrum=write_ldos_spectrum,
                        verbose=false) 
         
         return true
@@ -138,7 +142,8 @@ results = pmap(1:N_conf) do seed
                 spectra_eta, spectra_delta_omega,
                 actual_spectra_eta_factors,
                 measure_twist, twist_Ax, twist_qy,
-                allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq)
+                allow_gauge_dependent_spectra, write_gauge_pair_bonds_freq,
+                write_ldos_spectrum)
 end
 
 success_count = count(results)

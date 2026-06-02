@@ -40,6 +40,8 @@ boundary_condition=:periodic
 # Write gauge-covariant bond pairing every 5 sweeps. Set to 0 to disable.
 write_gauge_pair_bonds_freq=5
 allow_gauge_dependent_spectra=false
+# Full LDOS(omega) output is large. Set true only for runs that need it.
+write_ldos_spectrum=false
 
 # 5. HMC参数
 n_therm=100
@@ -98,6 +100,7 @@ n_flux_sc = $n_flux_sc
 boundary_condition = $boundary_condition
 write_gauge_pair_bonds_freq = $write_gauge_pair_bonds_freq
 allow_gauge_dependent_spectra = $allow_gauge_dependent_spectra
+write_ldos_spectrum = $write_ldos_spectrum
 n_therm = $n_therm
 n_measure = $n_measure
 Nt_therm_init = $Nt_therm_init

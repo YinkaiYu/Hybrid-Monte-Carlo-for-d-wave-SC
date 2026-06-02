@@ -19,6 +19,8 @@ struct TwistedSpectraResult
     A_MX_path_eta::Array{Float64, 3}
     A_XG_path_eta::Array{Float64, 3}
     A_XG_node_patch_eta::Array{Float64, 3}
+    ldos_ω::Union{Nothing,Matrix{Float64}}
+    ldos_ω_eta::Union{Nothing,Array{Float64, 3}}
     kx_grid::Vector{Float64}
     ky_grid::Vector{Float64}
     mx_path_kx::Float64
@@ -225,7 +227,8 @@ function measure_twisted_spectra(cache::ComputeCache,
                                  spectra_eta::Float64=p.η,
                                  spectra_delta_omega::Float64=p.Δω,
                                  eta_values::AbstractVector{<:Real}=Float64[spectra_eta],
-                                 reuse_buffers::Bool=false)
+                                 reuse_buffers::Bool=false,
+                                 write_ldos_spectrum::Bool=false)
     p.n_flux_sc == 0 ||
         error("measure_twisted_spectra is not supported for finite magnetic field (n_flux_sc=$(p.n_flux_sc))")
     Ltw <= 0 && error("Ltw must be positive")
@@ -265,6 +268,8 @@ function measure_twisted_spectra(cache::ComputeCache,
     dos_M_eta = zeros(Float64, nη, nω)
     dos_M_patch_eta = zeros(Float64, nη, nω)
     ldos_eta = zeros(Float64, nη, N)
+    ldos_ω_eta = write_ldos_spectrum ? zeros(Float64, nη, N, nω) : nothing
+    ldos_ω = write_ldos_spectrum ? zeros(Float64, N, nω) : nothing
     A_k0_eta = zeros(Float64, nη, Lx_eff, Ly_eff)
     A_MX_path_eta = zeros(Float64, nη, length(mx_path_ky), nω)
     A_XG_path_eta = zeros(Float64, nη, length(xg_path_kx), nω)
@@ -385,6 +390,13 @@ function measure_twisted_spectra(cache::ComputeCache,
                 @simd for iη in 1:nη
                     ldos_eta[iη, i] += site_weight * zero_lor_eta[iη]
                 end
+                if write_ldos_spectrum
+                    for iw in 1:nω
+                        @simd for iη in 1:nη
+                            ldos_ω_eta[iη, i, iw] += site_weight * lor_eta[iη, iw]
+                        end
+                    end
+                end
             end
             for my in 0:Ly-1, mx in 0:Lx-1
                 Ix = twist_fft_to_effective_index(mx, nx, Lx, Ltw)
@@ -448,12 +460,18 @@ function measure_twisted_spectra(cache::ComputeCache,
 
     dos_eta ./= (N * Ltw^2)
     ldos_eta ./= Ltw^2
+    if write_ldos_spectrum
+        ldos_ω_eta ./= Ltw^2
+    end
     A_k0_eta ./= N
 
     copyto!(dos_vals, @view dos_eta[1, :])
     copyto!(dos_M_vals, @view dos_M_eta[1, :])
     copyto!(dos_M_patch_vals, @view dos_M_patch_eta[1, :])
     copyto!(ldos_ω0, @view ldos_eta[1, :])
+    if write_ldos_spectrum
+        copyto!(ldos_ω, @view ldos_ω_eta[1, :, :])
+    end
     copyto!(A_k0, @view A_k0_eta[1, :, :])
     copyto!(A_MX_path, @view A_MX_path_eta[1, :, :])
     copyto!(A_XG_path, @view A_XG_path_eta[1, :, :])
@@ -477,6 +495,8 @@ function measure_twisted_spectra(cache::ComputeCache,
         reuse_buffers ? A_MX_path_eta : copy(A_MX_path_eta),
         reuse_buffers ? A_XG_path_eta : copy(A_XG_path_eta),
         reuse_buffers ? A_XG_node_patch_eta : copy(A_XG_node_patch_eta),
+        reuse_buffers ? ldos_ω : _copy_optional(ldos_ω),
+        reuse_buffers ? ldos_ω_eta : _copy_optional(ldos_ω_eta),
         kx_grid,
         ky_grid,
         mx_path_kx,

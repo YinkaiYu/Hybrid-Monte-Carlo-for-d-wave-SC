@@ -182,6 +182,23 @@ function write_ldos_csv(path, mean_ldos, err_ldos, Lx::Int, Ly::Int)
     end
 end
 
+function write_ldos_spectrum_csv(path, mean_ldos, err_ldos, omega_grid, Lx::Int, Ly::Int)
+    size(mean_ldos, 1) == Lx * Ly || error("LDOS spectrum site dimension does not match lattice size")
+    size(mean_ldos, 2) == length(omega_grid) || error("LDOS spectrum omega dimension mismatch")
+    size(err_ldos) == size(mean_ldos) || error("LDOS spectrum error shape mismatch")
+    open(path, "w") do io
+        println(io, "x,y,site,omega,LDOS,Error")
+        for y in 1:Ly, x in 1:Lx
+            site = (y - 1) * Lx + x
+            for iw in eachindex(omega_grid)
+                @printf(io, "%d,%d,%d,%.6f,%.6e,%.6e\n",
+                        x, y, site, omega_grid[iw],
+                        mean_ldos[site, iw], err_ldos[site, iw])
+            end
+        end
+    end
+end
+
 function path_peak_window(path::AbstractMatrix,
                           omega_grid::AbstractVector;
                           radius::Int=DEFAULT_PATH_WINDOW_RADIUS)

@@ -821,6 +821,8 @@ struct SpectrumResult
     A_k_ω0_eta::Union{Nothing,Array{Float64, 3}}
     A_MX_path_eta::Union{Nothing,Array{Float64, 3}}
     A_XG_path_eta::Union{Nothing,Array{Float64, 3}}
+    ldos_ω::Union{Nothing,Matrix{Float64}}
+    ldos_ω_eta::Union{Nothing,Array{Float64, 3}}
 end
 
 _single_eta_vector(x::Nothing) = nothing
@@ -859,7 +861,9 @@ function SpectrumResult(superfluid_stiffness::Float64,
                           reshape(copy(ldos_ω0), 1, :),
                           _single_eta_matrix(A_k_ω0),
                           _single_eta_matrix(A_MX_path),
-                          _single_eta_matrix(A_XG_path))
+                          _single_eta_matrix(A_XG_path),
+                          nothing,
+                          nothing)
 end
 
 struct TransportResult
@@ -885,6 +889,8 @@ struct SpectraOnlyResult
     A_k_ω0_eta::Union{Nothing,Array{Float64, 3}}
     A_MX_path_eta::Union{Nothing,Array{Float64, 3}}
     A_XG_path_eta::Union{Nothing,Array{Float64, 3}}
+    ldos_ω::Union{Nothing,Matrix{Float64}}
+    ldos_ω_eta::Union{Nothing,Array{Float64, 3}}
 end
 
 # ------------------------------------------------
@@ -1034,7 +1040,8 @@ end
 function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters;
                                    eta_values::AbstractVector{<:Real}=Float64[p.η],
                                    reuse_buffers::Bool=false,
-                                   include_momentum_spectra::Bool=true)
+                                   include_momentum_spectra::Bool=true,
+                                   write_ldos_spectrum::Bool=false)
     N = p.N
     Lx = p.Lx
     Ly = p.Ly
@@ -1078,6 +1085,8 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters;
     dos_eta = zeros(Float64, nη, nω)
     dos_M_eta = include_momentum_spectra ? zeros(Float64, nη, nω) : nothing
     ldos_eta = zeros(Float64, nη, N)
+    ldos_ω_eta = write_ldos_spectrum ? zeros(Float64, nη, N, nω) : nothing
+    ldos_ω = write_ldos_spectrum ? zeros(Float64, N, nω) : nothing
     ak_eta = include_momentum_spectra ? zeros(Float64, nη, Lx, Ly) : nothing
     ak_mx_eta = include_momentum_spectra ? zeros(Float64, nη, n_mx_path, nω) : nothing
     ak_xg_eta = include_momentum_spectra ? zeros(Float64, nη, n_xg_path, nω) : nothing
@@ -1183,6 +1192,13 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters;
             @simd for iη in 1:nη
                 ldos_eta[iη, i] += site_weight * zero_lor_eta[iη]
             end
+            if write_ldos_spectrum
+                for iw in 1:nω
+                    @simd for iη in 1:nη
+                        ldos_ω_eta[iη, i, iw] += site_weight * lor_eta[iη, iw]
+                    end
+                end
+            end
         end
         
         # Add to map: |u_k|^2 * delta(E)
@@ -1207,6 +1223,9 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters;
 
     copyto!(dos_vals, @view dos_eta[1, :])
     copyto!(ldos_ω0, @view ldos_eta[1, :])
+    if write_ldos_spectrum
+        copyto!(ldos_ω, @view ldos_ω_eta[1, :, :])
+    end
     if include_momentum_spectra
         copyto!(dos_M_vals, @view dos_M_eta[1, :])
         copyto!(ak_map, @view ak_eta[1, :, :])
@@ -1218,25 +1237,29 @@ function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters;
         return SpectraOnlyResult(dos_ω_grid, dos_vals, dos_M_vals, ldos_ω0,
                                  ak_map, ak_mx_path, ak_xg_path,
                                  dos_eta, dos_M_eta, ldos_eta,
-                                 ak_eta, ak_mx_eta, ak_xg_eta)
+                                 ak_eta, ak_mx_eta, ak_xg_eta,
+                                 ldos_ω, ldos_ω_eta)
     end
 
     return SpectraOnlyResult(copy(dos_ω_grid), copy(dos_vals), _copy_optional(dos_M_vals),
                              copy(ldos_ω0), _copy_optional(ak_map), _copy_optional(ak_mx_path),
                              _copy_optional(ak_xg_path), copy(dos_eta), _copy_optional(dos_M_eta),
                              copy(ldos_eta), _copy_optional(ak_eta), _copy_optional(ak_mx_eta),
-                             _copy_optional(ak_xg_eta))
+                             _copy_optional(ak_xg_eta), _copy_optional(ldos_ω),
+                             _copy_optional(ldos_ω_eta))
 end
 
 function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters;
                                        eta_values::AbstractVector{<:Real}=Float64[p.η],
                                        reuse_buffers::Bool=false,
-                                       include_momentum_spectra::Bool=true)
+                                       include_momentum_spectra::Bool=true,
+                                       write_ldos_spectrum::Bool=false)
     transport = measure_transport_only(cache, p; eta_values=eta_values,
                                        reuse_buffers=reuse_buffers)
     spectra = measure_untwisted_spectra(cache, p; eta_values=eta_values,
                                         reuse_buffers=reuse_buffers,
-                                        include_momentum_spectra=include_momentum_spectra)
+                                        include_momentum_spectra=include_momentum_spectra,
+                                        write_ldos_spectrum=write_ldos_spectrum)
 
     return SpectrumResult(transport.superfluid_stiffness,
                           transport.dc_conductivity,
@@ -1256,5 +1279,7 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters;
                           spectra.ldos_ω0_eta,
                           spectra.A_k_ω0_eta,
                           spectra.A_MX_path_eta,
-                          spectra.A_XG_path_eta)
+                          spectra.A_XG_path_eta,
+                          spectra.ldos_ω,
+                          spectra.ldos_ω_eta)
 end
