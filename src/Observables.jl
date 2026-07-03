@@ -591,6 +591,12 @@ end
     return (qx == 0.0 && qy == 0.0) ? 1.0 : sqrt(2.0) * cos(θ)
 end
 
+@inline function direction_component(direction::Symbol, dx::Int, dy::Int)
+    direction === :x && return dx
+    direction === :y && return dy
+    error("Unsupported current direction: $direction")
+end
+
 @inline function add_dense_hermitian_pair!(M::Matrix{ComplexF64},
                                            row::Int,
                                            col::Int,
@@ -609,10 +615,13 @@ end
                                                     dx::Int,
                                                     dy::Int,
                                                     qx::Float64,
-                                                    qy::Float64)
+                                                    qy::Float64,
+                                                    direction::Symbol=:x)
+    dα = direction_component(direction, dx, dy)
+    dα == 0 && return nothing
     η = probe_weight(cache, i, qx, qy)
     u = link_phase(cache.magnetic, i, dx, dy)
-    d1 = -im * tij * η * u
+    d1 = -im * tij * dα * η * u
     add_dense_hermitian_pair!(J, i, j, d1)
     add_dense_hermitian_pair!(J, i + N, j + N, -conj(d1))
     return nothing
@@ -620,6 +629,7 @@ end
 
 function probe_current_operator_matrix(cache::ComputeCache,
                                        p::ModelParameters;
+                                       direction::Symbol=:x,
                                        qx::Float64=0.0,
                                        qy::Float64=0.0)
     N = p.N
@@ -627,11 +637,13 @@ function probe_current_operator_matrix(cache::ComputeCache,
 
     @inbounds for i in 1:N
         add_probe_current_derivative_bond!(J, cache, N,
-                                           i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
+                                           i, p.nn_table[i, 1], p.t, 1, 0, qx, qy, direction)
         add_probe_current_derivative_bond!(J, cache, N,
-                                           i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
+                                           i, p.nn_table[i, 2], p.t, 0, 1, qx, qy, direction)
         add_probe_current_derivative_bond!(J, cache, N,
-                                           i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
+                                           i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy, direction)
+        add_probe_current_derivative_bond!(J, cache, N,
+                                           i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy, direction)
     end
 
     return sparse(J)
@@ -658,15 +670,18 @@ end
                                         dx::Int,
                                         dy::Int,
                                         qx::Float64,
-                                        qy::Float64)
+                                        qy::Float64,
+                                        direction::Symbol=:x)
+    dα = direction_component(direction, dx, dy)
+    dα == 0 && return nothing
     x = cache.x_idx[i] - 1
     y = cache.y_idx[i] - 1
     phase_q = cis(qx * x + qy * y)
     u = link_phase(cache.magnetic, i, dx, dy)
-    val = im * tij * phase_q * u
-    val_rev = -im * tij * phase_q * conj(u)
-    val_hole = im * tij * phase_q * conj(u)
-    val_hole_rev = -im * tij * phase_q * u
+    val = im * tij * dα * phase_q * u
+    val_rev = -im * tij * dα * phase_q * conj(u)
+    val_hole = im * tij * dα * phase_q * conj(u)
+    val_hole_rev = -im * tij * dα * phase_q * u
     add_sparse_current_pair!(I_idx, J_idx, V_val, i, j, val)
     add_sparse_current_pair!(I_idx, J_idx, V_val, j, i, val_rev)
     add_sparse_current_pair!(I_idx, J_idx, V_val, i + N, j + N, val_hole)
@@ -676,23 +691,26 @@ end
 
 function current_operator_matrix(cache::ComputeCache,
                                  p::ModelParameters;
+                                 direction::Symbol=:x,
                                  qx::Float64=0.0,
                                  qy::Float64=0.0)
     N = p.N
     I_idx = Int[]
     J_idx = Int[]
     V_val = ComplexF64[]
-    sizehint!(I_idx, 12 * N)
-    sizehint!(J_idx, 12 * N)
-    sizehint!(V_val, 12 * N)
+    sizehint!(I_idx, 16 * N)
+    sizehint!(J_idx, 16 * N)
+    sizehint!(V_val, 16 * N)
 
     @inbounds for i in 1:N
         add_kubo_current_bond!(I_idx, J_idx, V_val, cache, N,
-                               i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
+                               i, p.nn_table[i, 1], p.t, 1, 0, qx, qy, direction)
         add_kubo_current_bond!(I_idx, J_idx, V_val, cache, N,
-                               i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
+                               i, p.nn_table[i, 2], p.t, 0, 1, qx, qy, direction)
         add_kubo_current_bond!(I_idx, J_idx, V_val, cache, N,
-                               i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
+                               i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy, direction)
+        add_kubo_current_bond!(I_idx, J_idx, V_val, cache, N,
+                               i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy, direction)
     end
 
     return sparse(I_idx, J_idx, V_val, 2 * N, 2 * N)
@@ -707,10 +725,13 @@ end
                                        dx::Int,
                                        dy::Int,
                                        qx::Float64,
-                                       qy::Float64)
+                                       qy::Float64,
+                                       direction::Symbol=:x)
+    dα = direction_component(direction, dx, dy)
+    dα == 0 && return nothing
     η = probe_weight(cache, i, qx, qy)
     u = link_phase(cache.magnetic, i, dx, dy)
-    d2 = tij * η^2 * u
+    d2 = tij * dα^2 * η^2 * u
     add_dense_hermitian_pair!(K, i, j, d2)
     add_dense_hermitian_pair!(K, i + N, j + N, -conj(d2))
     return nothing
@@ -718,31 +739,46 @@ end
 
 function diamagnetic_operator_matrix(cache::ComputeCache,
                                      p::ModelParameters;
+                                     direction::Symbol=:x,
                                      qx::Float64=0.0,
                                      qy::Float64=0.0)
     N = p.N
     K = zeros(ComplexF64, 2 * N, 2 * N)
     @inbounds for i in 1:N
-        add_diamagnetic_bond!(K, cache, N, i, p.nn_table[i, 1], p.t, 1, 0, qx, qy)
-        add_diamagnetic_bond!(K, cache, N, i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy)
-        add_diamagnetic_bond!(K, cache, N, i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy)
+        add_diamagnetic_bond!(K, cache, N, i, p.nn_table[i, 1], p.t, 1, 0, qx, qy, direction)
+        add_diamagnetic_bond!(K, cache, N, i, p.nn_table[i, 2], p.t, 0, 1, qx, qy, direction)
+        add_diamagnetic_bond!(K, cache, N, i, p.nnn_table[i, 1], p.tp, 1, 1, qx, qy, direction)
+        add_diamagnetic_bond!(K, cache, N, i, p.nnn_table[i, 4], p.tp, 1, -1, qx, qy, direction)
     end
     return K
 end
 
 """
-    build_current_operator!(cache::ComputeCache, p::ModelParameters; qx=0.0, qy=0.0, store=:q0)
+    build_current_operator!(cache::ComputeCache, p::ModelParameters;
+                            direction=:x, qx=0.0, qy=0.0, store=:q0)
 
-构建生产路径使用的 x 方向复数 q Kubo 电流算符稀疏矩阵 Jx(q)。
-诊断用的实 probe 导数算符由 probe_current_operator_matrix 构建。
+构建生产路径使用的复数 q Kubo 电流算符稀疏矩阵。
+`direction=:x` 构建 Jx，`direction=:y` 构建 Jy。
+`store=:q0` 缓存到 `Jx_sparse_q0` 或 `Jy_sparse_q0`；
+`store=:qy` 只缓存 x 方向有限 qy 算符到 `Jx_sparse_qy`。
+Hall 输运设计不包含 `Jy(qy)` 缓存，因此 `direction=:y, store=:qy` 会报错。
+诊断用的实 probe 导数算符由 `probe_current_operator_matrix` 构建。
 """
-function build_current_operator!(cache::ComputeCache, p::ModelParameters; qx::Float64=0.0, qy::Float64=0.0, store::Symbol=:q0)
-    Jx_sparse = current_operator_matrix(cache, p; qx=qx, qy=qy)
+function build_current_operator!(cache::ComputeCache, p::ModelParameters;
+                                 direction::Symbol=:x,
+                                 qx::Float64=0.0,
+                                 qy::Float64=0.0,
+                                 store::Symbol=:q0)
+    J_sparse = current_operator_matrix(cache, p; direction=direction, qx=qx, qy=qy)
 
-    if store === :q0
-        cache.Jx_sparse_q0 = Jx_sparse
-    elseif store === :qy
-        cache.Jx_sparse_qy = Jx_sparse
+    if direction === :x && store === :q0
+        cache.Jx_sparse_q0 = J_sparse
+    elseif direction === :x && store === :qy
+        cache.Jx_sparse_qy = J_sparse
+    elseif direction === :y && store === :q0
+        cache.Jy_sparse_q0 = J_sparse
+    elseif direction === :y && store === :qy
+        error("Jy(qy) cache is not part of the Hall transport design")
     else
         error("Unknown current-operator cache tag: $store")
     end

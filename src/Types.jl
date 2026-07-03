@@ -299,6 +299,7 @@ mutable struct ComputeCache{M<:AbstractMagneticCache}
     # 输运计算缓存
     Jx_sparse_q0::SparseMatrixCSC{ComplexF64, Int} # 稀疏电流算符 Jx(q=0) (2N x 2N)
     Jx_sparse_qy::SparseMatrixCSC{ComplexF64, Int} # 稀疏电流算符 Jx(qx=0,qy=2π/Ly) (2N x 2N)
+    Jy_sparse_q0::SparseMatrixCSC{ComplexF64, Int} # 稀疏电流算符 Jy(q=0) (2N x 2N)
     J_mn::Matrix{ComplexF64}                       # 电流矩阵元 <n|Jx(q)|m> (2N x 2N, 稠密)
     temp_JU::Matrix{ComplexF64}
     
@@ -354,6 +355,7 @@ function initialize_cache(p::ModelParameters)
     # 我们将在专门的函数里填充它，这里先分配空
     Jx_sparse_q0 = spzeros(ComplexF64, dim, dim)
     Jx_sparse_qy = spzeros(ComplexF64, dim, dim)
+    Jy_sparse_q0 = spzeros(ComplexF64, dim, dim)
     J_mn = zeros(ComplexF64, dim, dim)
     temp_JU = zeros(ComplexF64, dim, dim) 
     
@@ -403,7 +405,7 @@ function initialize_cache(p::ModelParameters)
 
     return ComputeCache(H_base, H_herm, E_n, U, forces, fermi_factors, 
                         d_local_cache, Δ_backup, E_n_backup, U_backup,
-                        Jx_sparse_q0, Jx_sparse_qy, J_mn, temp_JU,
+                        Jx_sparse_q0, Jx_sparse_qy, Jy_sparse_q0, J_mn, temp_JU,
                         u_r_cache, u_k_cache, fft_plan,
                         x_idx, y_idx, parity_x, parity_y,
                         u_pi_cache, u_pi_k_cache, fft_plan_y,

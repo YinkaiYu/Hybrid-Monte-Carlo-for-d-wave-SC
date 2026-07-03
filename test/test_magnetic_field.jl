@@ -1,6 +1,7 @@
 using Test
 using LinearAlgebra
 using Random
+using SparseArrays
 using JLD2
 using LogExpFunctions
 using DwaveHMC
@@ -125,6 +126,15 @@ function random_finite_field_state(p)
     return state
 end
 
+function real_finite_field_state(p; seed=20260704)
+    Random.seed!(seed)
+    state = initialize_state(p)
+    state.disorder_pot .= randn(p.N) .* 0.05
+    state.Δ .= randn(p.N, 2) .* 0.03 .+ 0.0im
+    state.π .= 0.0 + 0.0im
+    return state
+end
+
 function manual_gauge_pair_bond(cache, p, i::Int, dir::Int)
     N = p.N
     j = p.nn_table[i, dir]
@@ -144,7 +154,8 @@ end
 
 @testset "Kubo operators match Hamiltonian derivatives" begin
     for (Lx, Ly) in ((4, 4), (2, 2))
-        p = magnetic_test_parameters(Lx=Lx, Ly=Ly, n_flux_sc=2, boundary_condition=:magnetic_pbc)
+        p = magnetic_test_parameters(Lx=Lx, Ly=Ly, n_flux_sc=2,
+                                     boundary_condition=:magnetic_pbc)
         state = random_finite_field_state(p)
         cache = initialize_cache(p)
         init_static_H!(cache, p, state)
@@ -156,20 +167,30 @@ end
         H0 = zeros(ComplexF64, dim, dim)
         eps = 1.0e-6
 
-        for qy in (0.0, 2π / p.Ly)
-            DwaveHMC.build_probe_H_BdG!(Hplus, cache, p, state; λ=eps, qx=0.0, qy=qy)
-            DwaveHMC.build_probe_H_BdG!(Hminus, cache, p, state; λ=-eps, qx=0.0, qy=qy)
-            DwaveHMC.build_probe_H_BdG!(H0, cache, p, state; λ=0.0, qx=0.0, qy=qy)
+        for direction in (:x, :y)
+            qy_values = direction === :x ? (0.0, 2π / p.Ly) : (0.0,)
+            for qy in qy_values
+                DwaveHMC.build_probe_H_BdG!(Hplus, cache, p, state;
+                                            direction=direction, λ=eps, qx=0.0, qy=qy)
+                DwaveHMC.build_probe_H_BdG!(Hminus, cache, p, state;
+                                            direction=direction, λ=-eps, qx=0.0, qy=qy)
+                DwaveHMC.build_probe_H_BdG!(H0, cache, p, state;
+                                            direction=direction, λ=0.0, qx=0.0, qy=qy)
 
-            J_fd = (Matrix(Hermitian(Hplus, :U)) - Matrix(Hermitian(Hminus, :U))) ./ (2eps)
-            K_fd = (Matrix(Hermitian(Hplus, :U)) + Matrix(Hermitian(Hminus, :U)) -
-                    2 .* Matrix(Hermitian(H0, :U))) ./ (eps^2)
+                J_fd = (Matrix(Hermitian(Hplus, :U)) - Matrix(Hermitian(Hminus, :U))) ./ (2eps)
+                K_fd = (Matrix(Hermitian(Hplus, :U)) + Matrix(Hermitian(Hminus, :U)) -
+                        2 .* Matrix(Hermitian(H0, :U))) ./ (eps^2)
 
-            J_an = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p; qx=0.0, qy=qy))
-            K_an = DwaveHMC.diamagnetic_operator_matrix(cache, p; qx=0.0, qy=qy)
+                J_an = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p;
+                                                                      direction=direction,
+                                                                      qx=0.0, qy=qy))
+                K_an = DwaveHMC.diamagnetic_operator_matrix(cache, p;
+                                                            direction=direction,
+                                                            qx=0.0, qy=qy)
 
-            @test norm(J_an - J_fd) / max(norm(J_fd), 1.0) < 1.0e-6
-            @test norm(K_an - K_fd) / max(norm(K_fd), 1.0) < 5.0e-4
+                @test norm(J_an - J_fd) / max(norm(J_fd), 1.0) < 1.0e-6
+                @test norm(K_an - K_fd) / max(norm(K_fd), 1.0) < 5.0e-4
+            end
         end
     end
 end
@@ -185,6 +206,18 @@ end
     J_probe = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p; qx=0.0, qy=0.0))
 
     @test J_prod ≈ -J_probe atol=1.0e-12 rtol=1.0e-12
+
+    J_prod_y = Matrix(DwaveHMC.current_operator_matrix(cache, p; direction=:y, qx=0.0, qy=0.0))
+    J_probe_y = Matrix(DwaveHMC.probe_current_operator_matrix(cache, p; direction=:y, qx=0.0, qy=0.0))
+    @test J_prod_y ≈ -J_probe_y atol=1.0e-12 rtol=1.0e-12
+
+    DwaveHMC.build_current_operator!(cache, p; direction=:y, qx=0.0, qy=0.0, store=:q0)
+    @test nnz(cache.Jy_sparse_q0) > 0
+    @test Matrix(cache.Jy_sparse_q0) ≈
+          Matrix(DwaveHMC.current_operator_matrix(cache, p; direction=:y, qx=0.0, qy=0.0)) atol=1.0e-12 rtol=1.0e-12
+    @test_throws ErrorException DwaveHMC.build_current_operator!(cache, p; direction=:y,
+                                                                 qx=0.0, qy=2π / p.Ly,
+                                                                 store=:qy)
 
     qy = 2π / p.Ly
     J_prod_qp = Matrix(DwaveHMC.current_operator_matrix(cache, p; qx=0.0, qy=qy))
