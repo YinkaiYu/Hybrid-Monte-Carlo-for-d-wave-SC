@@ -1,6 +1,6 @@
 # 有限磁场约定
 
-本文档记录当前有限轨道磁场版本的输入、规范约定和可观测量解释。第一版只支持环面上的 magnetic periodic boundary condition (magnetic PBC)，还没有实现磁性元胞、magnetic Bloch theorem、Hall conductivity 或 magnetic-translation-covariant momentum spectra。
+本文档记录当前有限轨道磁场版本的输入、规范约定和可观测量解释。第一版只支持环面上的 magnetic periodic boundary condition (magnetic PBC)，还没有实现磁性元胞、magnetic Bloch theorem 或 magnetic-translation-covariant momentum spectra。
 
 ## 磁场如何进入晶格模型
 
@@ -121,7 +121,17 @@ $$
 
 在有限磁场下，它是一个被磁场压低后的 stiffness diagnostic。不要把有限磁场的 `Superfluid_Stiffness` 当作零场 BKT universal jump 的 $T_c$ 判据。
 
-`DC_Conductivity` 是 regular part 的 $\sigma_{xx}$，不包含超流 $\delta(\omega)$ 项。第一版没有 Hall conductivity，因此不能从 $\sigma_{xx}$ 和 $\sigma_{xy}$ 组成完整电阻率张量。特别是，`1 / DC_Conductivity` 只能作为粗略 proxy，不能命名为物理的 $\rho_{xx}$。
+`DC_Conductivity` 是 regular part 的 $\sigma_{xx}$，不包含超流 $\delta(\omega)$ 项。有限磁场运行如果打开 transport 或 spectra 测量，也会输出 Hall conductivity：CSV 标量列为 `Hall_Conductivity`，JLD2 谱学键为 `hall_cond`、`hall_cond_eta`、`hall_opt_cond`、`hall_opt_cond_eta`，谱后处理输出 `spectra_hall_cond.csv`。`hall_cond` / `Hall_Conductivity` 是同一有限 $\eta$ Kubo--Greenwood 表达式在 $\omega=0$ 的实部，即 $\sigma_{xy}^{\rm dc}=\mathrm{Re}\,\sigma_{xy}(0)$。
+
+当前 `J_y` 电流算符沿程序中正向列举的 bond 求方向分量：`+y` 和 `+x+y` bond 的方向因子是 `+1`，`+x-y` bond 的方向因子是 `-1`。这与 `direction=:y` 的 `direction_component(direction, dx, dy)=dy` 约定一致；Hall tensor 使用 $J^x_{nm}J^y_{mn}$。
+
+HPC 汇总中的 `Longitudinal_Resistivity_mean` / `Longitudinal_Resistivity_err` 由构型平均后的 $\overline{\sigma_{xx}}$ 和 $\overline{\sigma_{xy}}$ 反演得到：
+$$
+\rho_{xx}=
+\frac{\overline{\sigma_{xx}}}
+{\overline{\sigma_{xx}}^2+\overline{\sigma_{xy}}^2}.
+$$
+也就是说，汇总先平均 `DC_Conductivity` 和 `Hall_Conductivity`，再反演 $2\times2$ 电导张量；不保留逐构型 $\rho_{xx}$ 平均。
 
 ## 谱函数与动量空间诊断
 
@@ -158,11 +168,10 @@ dos_M_eta_landau_gauge_diagnostic
 第一版没有实现以下功能：
 
 - 磁性元胞或 magnetic Bloch theorem。
-- Hall conductivity。
 - magnetic-translation-covariant momentum spectra。
 - 有限磁场下的 twisted-boundary spectra 或 twist free-energy benchmark。
 
-如果需要论文级有限磁场动量谱或电阻率张量，需要在这些基础设施补齐后再解释相关输出。
+如果需要论文级有限磁场动量谱，需要在 magnetic-translation-covariant spectra 基础设施补齐后再解释相关输出。
 
 ## HPC 运行建议
 

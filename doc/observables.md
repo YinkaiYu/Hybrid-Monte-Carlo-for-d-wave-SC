@@ -191,13 +191,35 @@ $$ \text{Re}\,\sigma_{xx}(\omega) = \frac{\pi}{N \omega} \sum_{n\ne m}^{2N} (f(E
 $$ \sigma_{\text{DC}}=\text{Re}\,\sigma_{xx}(\omega\to0)=\frac{\pi}{N} \sum_{n\ne m}^{2N} \left( -f'(E_n) \right) |J^x_{nm}(0)|^2 \delta(E_m - E_n) $$
 其中 $-f'(E_n) =\beta f(E_n) [1 - f(E_n)]$ 。注意这只包含了 regular part，没有包含超流导致的发散项 $\pi \rho_s \delta(\omega)$ 。
 
-有限磁场下，`DC_Conductivity` 仍表示 regular $\sigma_{xx}$。当前第一版没有 Hall conductivity，因此不能把 `1 / DC_Conductivity` 解释或命名为物理的 longitudinal resistivity $\rho_{xx}$；它至多是一个经验 proxy。
+程序输出的 `DC_Conductivity` 仍表示 regular $\sigma_{xx}$，不包含超流导致的 $\delta$ 峰。有限磁场下还会用同一组有限展宽 Kubo--Greenwood 矩阵元计算 Hall tensor：
+$$
+\sigma_{xy}(\omega)
+=\frac{i}{N}
+\sum_{n\ne m}
+\frac{f_n-f_m}{E_m-E_n}
+\frac{J^x_{nm}J^y_{mn}}
+{\omega-(E_m-E_n)+i\eta}.
+$$
+直流 Hall 输出定义为
+$$
+\sigma_{xy}^{\rm dc}=\mathrm{Re}\,\sigma_{xy}(0).
+$$
+因此 `Hall_Conductivity` / `hall_cond` 中的 `sigma_xy_dc` 应理解为同一个有限 $\eta$ Kubo--Greenwood 表达式在 $\omega=0$ 的实部，和 `DC_Conductivity` / `sigma_xx_dc` 的展宽约定一致。
+
+若已经对构型平均得到
+$\overline{\sigma_{xx}}$ 和 $\overline{\sigma_{xy}}$，HPC 汇总中的 longitudinal resistivity 使用二维电导张量反演：
+$$
+\rho_{xx}=
+\frac{\overline{\sigma_{xx}}}
+{\overline{\sigma_{xx}}^2+\overline{\sigma_{xy}}^2}.
+$$
+这里先分别平均 $\sigma_{xx}$ 和 $\sigma_{xy}$，再反演 $2\times2$ tensor；不保留逐构型 $\rho_{xx}$ 平均。
 
 数值上取 $\delta$ 函数为：
 $$ \delta(E) = \frac{1}{\pi} \frac{\eta}{E^2 + \eta^2} $$
 其中 $\eta$ 是手动设置的小量。可以取 $\eta\approx W/N$，也即平均能级间距，其中 $W$ 是能带宽度。
 
-在程序中，我们既要计算 $\sigma_{\text{DC}}$ 也要计算 $\text{Re}\,\sigma_{xx}(\omega)$。其中 $\omega\in[\eta,t]$，间隔为手动设置的 $\Delta\omega$。
+在程序中，我们既要计算 $\sigma_{\text{DC}}$ 也要计算 $\text{Re}\,\sigma_{xx}(\omega)$ 和复数 $\sigma_{xy}(\omega)$。其中 $\omega\in[\eta,t]$，间隔为手动设置的 $\Delta\omega$。输运 CSV 包含 `DC_Conductivity` 和 `Hall_Conductivity`。JLD2 谱学键包含 `hall_cond`、`hall_cond_eta`、`hall_opt_cond`、`hall_opt_cond_eta`；谱后处理输出 `spectra_hall_cond.csv`。HPC 汇总会额外写出 `Longitudinal_Resistivity_mean` 和 `Longitudinal_Resistivity_err`。
 
 ### 态密度与谱函数
 
