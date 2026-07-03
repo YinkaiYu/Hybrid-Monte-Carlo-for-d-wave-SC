@@ -58,7 +58,9 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
                                  spectra_Ltw=2,
                                  momentum_mode=:old,
                                  multi_eta=true,
-                                 include_ldos_spectrum=false)
+                                 include_ldos_spectrum=false,
+                                 include_hall=true,
+                                 hall_im_offset=0.0)
     momentum_mode in (:old, :diagnostic, :none) ||
         error("unknown momentum_mode=$momentum_mode")
     include_momentum = momentum_mode !== :none
@@ -119,6 +121,12 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
             if use_twisted_spectra
                 file["$prefix/A_XG_node_patch"] = xg_node_patch .+ offset .+ sweep
             end
+            if include_hall
+                hall_base = ComplexF64[1.0 + 10.0im, 2.0 + 20.0im] .+
+                            (offset + sweep) .+ (im * hall_im_offset)
+                file["$prefix/hall_cond"] = 10.0 + offset + sweep
+                file["$prefix/hall_opt_cond"] = hall_base
+            end
             if multi_eta
                 stack_eta_vector(base) = vcat(reshape(base .* 1.0, 1, :),
                                               reshape(base .* 2.0, 1, :),
@@ -139,6 +147,14 @@ function write_synthetic_spectra(dir; effective=(4, 4), nsweeps=2, offset=0.0,
 
                 file["$prefix/dc_cond_eta"] = [100.0, 200.0, 400.0] .+ offset .+ sweep
                 file["$prefix/opt_cond_eta"] = stack_eta_vector(opt_base)
+                if include_hall
+                    hall_base = ComplexF64[1.0 + 10.0im, 2.0 + 20.0im] .+
+                                (offset + sweep) .+ (im * hall_im_offset)
+                    file["$prefix/hall_cond_eta"] = [10.0, 20.0, 40.0] .+ offset .+ sweep
+                    file["$prefix/hall_opt_cond_eta"] = vcat(reshape(hall_base .* 1.0, 1, :),
+                                                             reshape(hall_base .* 2.0, 1, :),
+                                                             reshape(hall_base .* 4.0, 1, :))
+                end
                 file["$prefix/dos_eta"] = stack_eta_vector(dos_base)
                 if include_momentum
                     dos_m_eta_key = diagnostic_momentum ? "dos_M_eta_landau_gauge_diagnostic" : "dos_M_eta"
@@ -246,7 +262,11 @@ end
         @test isfile(joinpath(target_dir, "processed_MX_path.csv"))
         @test isfile(joinpath(target_dir, "processed_XG_path.csv"))
         @test header(joinpath(target_dir, "processed_dos_M.csv")) == "omega,DOS_M,Error"
+        @test header(joinpath(target_dir, "processed_hall_cond.csv")) ==
+              "omega,Re_Sigma_xy,Re_Error,Im_Sigma_xy,Im_Error"
         @test csv_data_rows(joinpath(target_dir, "processed_ldos0.csv")) == 4
+        @test first_data_value(joinpath(target_dir, "processed_hall_cond.csv"), 2) == 2.0
+        @test first_data_value(joinpath(target_dir, "processed_hall_cond.csv"), 4) == 10.0
         @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 8.0
         @test first_data_value(joinpath(target_dir, "processed_dos_node.csv"), 2) == 6.0
         @test !isfile(joinpath(target_dir, "processed_ldos.csv"))
@@ -273,8 +293,10 @@ end
                                 nsweeps=1,
                                 use_twisted_spectra=false,
                                 spectra_Ltw=1,
-                                momentum_mode=:none)
-        for name in (PROCESSED_GENERIC_MOMENTUM_FILES..., PROCESSED_DIAGNOSTIC_MOMENTUM_FILES...)
+                                momentum_mode=:none,
+                                include_hall=false)
+        for name in (PROCESSED_GENERIC_MOMENTUM_FILES..., PROCESSED_DIAGNOSTIC_MOMENTUM_FILES...,
+                     "processed_hall_cond.csv")
             touch_csv(joinpath(target_dir, name))
         end
 
@@ -282,7 +304,8 @@ end
 
         @test isfile(joinpath(target_dir, "processed_dos.csv"))
         @test isfile(joinpath(target_dir, "processed_ldos0.csv"))
-        for name in (PROCESSED_GENERIC_MOMENTUM_FILES..., PROCESSED_DIAGNOSTIC_MOMENTUM_FILES...)
+        for name in (PROCESSED_GENERIC_MOMENTUM_FILES..., PROCESSED_DIAGNOSTIC_MOMENTUM_FILES...,
+                     "processed_hall_cond.csv")
             @test !isfile(joinpath(target_dir, name))
         end
     end
@@ -322,7 +345,24 @@ end
         @test isfile(joinpath(target_dir, "processed_dos_AN.csv"))
         @test isfile(joinpath(target_dir, "processed_dos_node.csv"))
         @test first_data_value(joinpath(target_dir, "processed_dos.csv"), 1) == -2.0
+        @test header(joinpath(target_dir, "spectra_hall_cond.csv")) ==
+              "omega,Re_Sigma_xy,Re_Error,Im_Sigma_xy,Im_Error"
+        @test first_data_value(joinpath(target_dir, "spectra_hall_cond.csv"), 2) == 2.0
+        @test first_data_value(joinpath(target_dir, "spectra_hall_cond.csv"), 4) == 10.0
         @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 8.0
+    end
+end
+
+@testset "batch_process_spectra.jl removes stale Hall output for old spectra files" begin
+    mktempdir() do root
+        root_dir = joinpath(root, BATCH_ROOT_REL)
+        target_dir = joinpath(root_dir, "T_0.10")
+        write_synthetic_spectra(target_dir; nsweeps=1, include_hall=false)
+        touch_csv(joinpath(target_dir, "spectra_hall_cond.csv"))
+        Base.invokelatest(BatchProcessSpectraScript.process_single_directory, target_dir)
+
+        @test isfile(joinpath(target_dir, "processed_opt_cond.csv"))
+        @test !isfile(joinpath(target_dir, "spectra_hall_cond.csv"))
     end
 end
 
@@ -368,6 +408,8 @@ end
         @test first_data_value(joinpath(target_dir, "processed_dc_cond.csv"), 2) == 401.0
         @test first_data_value(joinpath(target_dir, "processed_dos.csv"), 2) == 16.0
         @test first_data_value(joinpath(target_dir, "processed_dos_AN.csv"), 2) == 32.0
+        @test first_data_value(joinpath(target_dir, "processed_hall_cond.csv"), 2) == 8.0
+        @test first_data_value(joinpath(target_dir, "processed_hall_cond.csv"), 4) == 40.0
     end
 end
 
@@ -405,6 +447,7 @@ end
         write_synthetic_spectra(joinpath(t_dir, "conf_002");
                                 offset=10.0,
                                 nsweeps=1,
+                                hall_im_offset=10.0,
                                 include_ldos_spectrum=true)
         Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
 
@@ -420,11 +463,30 @@ end
         @test csv_data_rows(joinpath(t_dir, "spectra_ldos.csv")) == 4 * 3
         @test isfile(joinpath(t_dir, "spectra_path_peaks.csv"))
         @test header(joinpath(t_dir, "spectra_dos.csv")) == "omega,DOS,DOS_Error,DOS_M,DOS_M_Error"
+        @test header(joinpath(t_dir, "spectra_hall_cond.csv")) ==
+              "omega,Re_Sigma_xy,Re_Error,Im_Sigma_xy,Im_Error"
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 1) == -2.0
         @test first_data_value(joinpath(t_dir, "spectra_dos.csv"), 2) == 9.0
+        @test first_data_value(joinpath(t_dir, "spectra_hall_cond.csv"), 2) == 7.0
+        @test first_data_value(joinpath(t_dir, "spectra_hall_cond.csv"), 3) ≈ sqrt(12.5) atol=1e-6
+        @test first_data_value(joinpath(t_dir, "spectra_hall_cond.csv"), 4) == 15.0
+        @test first_data_value(joinpath(t_dir, "spectra_hall_cond.csv"), 5) ≈ sqrt(12.5) atol=1e-6
         @test first_data_value(joinpath(t_dir, "spectra_ldos.csv"), 5) == 7.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_AN.csv"), 2) == 13.0
         @test first_data_value(joinpath(t_dir, "spectra_dos_node.csv"), 2) == 114.0
+    end
+end
+
+@testset "projectHPC batch processor removes stale Hall output for old spectra files" begin
+    mktempdir() do root
+        t_dir = joinpath(root, "T_0.10")
+        write_synthetic_spectra(joinpath(t_dir, "conf_001"); offset=0.0, nsweeps=1, include_hall=false)
+        write_synthetic_spectra(joinpath(t_dir, "conf_002"); offset=10.0, nsweeps=1, include_hall=false)
+        touch_csv(joinpath(t_dir, "spectra_hall_cond.csv"))
+        Base.invokelatest(HPCProcessSpectraScript.process_T_directory, t_dir)
+
+        @test isfile(joinpath(t_dir, "spectra_opt_cond.csv"))
+        @test !isfile(joinpath(t_dir, "spectra_hall_cond.csv"))
     end
 end
 

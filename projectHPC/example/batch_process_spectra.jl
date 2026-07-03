@@ -9,6 +9,7 @@ target_dir = get(ENV, "DWAVEHMC_ANALYSIS_DIR", @__DIR__)
 const SPECTRA_OUTPUT_FILES = [
     "spectra_dc_cond.csv",
     "spectra_opt_cond.csv",
+    "spectra_hall_cond.csv",
     "spectra_dos.csv",
     "spectra_dos_M.csv",
     "spectra_dos_M_patch.csv",
@@ -191,6 +192,8 @@ function process_single_config(jld_path; eta_factor=1)
             has_dc = haskey(g1, "dc_cond_eta") || haskey(g1, "dc_cond")
             sum_dc = has_dc ? selected_scalar(g1, "dc_cond_eta", "dc_cond", eta_idx) : 0.0
             sum_opt = copy(selected_vector(g1, "opt_cond_eta", "opt_cond", eta_idx))
+            has_hall_opt = haskey(g1, "hall_opt_cond") || haskey(g1, "hall_opt_cond_eta")
+            sum_hall_opt = has_hall_opt ? copy(selected_vector(g1, "hall_opt_cond_eta", "hall_opt_cond", eta_idx)) : nothing
             sum_dos = copy(selected_vector(g1, "dos_eta", "dos", eta_idx))
             momentum_source = momentum_source_for_group(g1)
             dos_M_pairs, ak_pairs, mx_pairs, xg_pairs = momentum_key_pairs(momentum_source)
@@ -252,10 +255,16 @@ function process_single_config(jld_path; eta_factor=1)
                 if (haskey(g, "dc_cond_eta") || haskey(g, "dc_cond")) != has_dc
                     error("Incompatible spectra config: dc_cond presence changes across sweeps")
                 end
+                if (haskey(g, "hall_opt_cond") || haskey(g, "hall_opt_cond_eta")) != has_hall_opt
+                    error("Incompatible spectra config: hall_opt_cond presence changes across sweeps")
+                end
                 if has_dc
                     sum_dc += selected_scalar(g, "dc_cond_eta", "dc_cond", eta_idx)
                 end
                 sum_opt .+= require_same_shape("opt_cond", selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx), sum_opt)
+                if has_hall_opt
+                    sum_hall_opt .+= require_same_shape("hall_opt_cond", selected_vector(g, "hall_opt_cond_eta", "hall_opt_cond", eta_idx), sum_hall_opt)
+                end
                 sum_dos .+= require_same_shape("dos", selected_vector(g, "dos_eta", "dos", eta_idx), sum_dos)
                 if sum_dos_M !== nothing
                     sum_dos_M .+= require_same_shape("dos_M", sweep_dos_M, sum_dos_M)
@@ -286,6 +295,7 @@ function process_single_config(jld_path; eta_factor=1)
             end
 
             res = (opt=sum_opt ./ count,
+                   hall_opt=has_hall_opt ? (sum_hall_opt ./ count) : nothing,
                    dc=has_dc ? (sum_dc / count) : nothing,
                    dos=sum_dos ./ count,
                    dos_M=sum_dos_M === nothing ? nothing : (sum_dos_M ./ count),
@@ -312,7 +322,8 @@ function process_single_config(jld_path; eta_factor=1)
                (res.xg_path !== nothing && any(isnan, res.xg_path)) ||
                (res.node_path !== nothing && any(isnan, res.node_path)) ||
                (res.dc !== nothing && isnan(res.dc)) ||
-               (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch))
+               (res.dos_M_patch !== nothing && any(isnan, res.dos_M_patch)) ||
+               (res.hall_opt !== nothing && any(z -> isnan(real(z)) || isnan(imag(z)), res.hall_opt))
                 return nothing
             end
 
@@ -342,6 +353,7 @@ function compatibility_signature(res)
         spectra_Lx_eff=meta["spectra_Lx_eff"],
         spectra_Ly_eff=meta["spectra_Ly_eff"],
         opt_size=size(res.opt),
+        hall_opt_size=res.hall_opt === nothing ? nothing : size(res.hall_opt),
         dos_size=size(res.dos),
         dos_M_size=res.dos_M === nothing ? nothing : size(res.dos_M),
         dos_M_patch_size=res.dos_M_patch === nothing ? nothing : size(res.dos_M_patch),
@@ -387,6 +399,7 @@ function process_T_directory(dir_path; eta_factor=1)
     println("Processing $(basename(dir_path))...")
 
     samples_opt = []
+    samples_hall_opt = []
     samples_dos = []
     samples_dos_M = []
     samples_dos_M_patch = []
@@ -430,6 +443,9 @@ function process_T_directory(dir_path; eta_factor=1)
         end
 
         push!(samples_opt, res.opt)
+        if res.hall_opt !== nothing
+            push!(samples_hall_opt, res.hall_opt)
+        end
         push!(samples_dos, res.dos)
         if res.dos_M !== nothing
             push!(samples_dos_M, res.dos_M)
@@ -491,6 +507,14 @@ function process_T_directory(dir_path; eta_factor=1)
 
     write_series_csv(joinpath(dir_path, "spectra_opt_cond.csv"),
                      "omega,Re_Sigma,Error", omega_grid, final_opt, err_opt)
+    if length(samples_hall_opt) == real_n
+        final_hall, err_hall_re, err_hall_im = calc_complex_stats(samples_hall_opt)
+        write_complex_series_csv(joinpath(dir_path, "spectra_hall_cond.csv"),
+                                 "omega,Re_Sigma_xy,Re_Error,Im_Sigma_xy,Im_Error",
+                                 omega_grid, final_hall, err_hall_re, err_hall_im)
+    else
+        rm(joinpath(dir_path, "spectra_hall_cond.csv"); force=true)
+    end
 
     if length(samples_dos_M) == real_n
         final_dos_M, err_dos_M = calc_stats(samples_dos_M)

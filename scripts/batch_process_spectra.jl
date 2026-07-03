@@ -92,6 +92,7 @@ function collect_sweep_data(file; eta_factor=1)
     eta_idx = selected_eta_index(file, eta_factor)
     list_dc = Float64[]
     list_opt = Vector{Vector{Float64}}()
+    list_hall_opt = Vector{Vector{ComplexF64}}()
     list_dos = Vector{Vector{Float64}}()
     list_dos_M = Vector{Vector{Float64}}()
     list_dos_M_patch = Vector{Vector{Float64}}()
@@ -116,6 +117,9 @@ function collect_sweep_data(file; eta_factor=1)
                 push!(list_dc, selected_scalar(g, "dc_cond_eta", "dc_cond", eta_idx))
             end
             push!(list_opt, selected_vector(g, "opt_cond_eta", "opt_cond", eta_idx))
+            if haskey(g, "hall_opt_cond_eta") || haskey(g, "hall_opt_cond")
+                push!(list_hall_opt, selected_vector(g, "hall_opt_cond_eta", "hall_opt_cond", eta_idx))
+            end
             push!(list_dos, selected_vector(g, "dos_eta", "dos", eta_idx))
             dos_M = selected_vector_any(g, dos_M_pairs, eta_idx)
             if dos_M !== nothing
@@ -147,6 +151,7 @@ function collect_sweep_data(file; eta_factor=1)
 
     return (dc=list_dc,
             opt=list_opt,
+            hall_opt=list_hall_opt,
             dos=list_dos,
             dos_M=list_dos_M,
             dos_M_patch=list_dos_M_patch,
@@ -197,6 +202,14 @@ function process_single_directory(target_dir; eta_factor=1)
 
         write_series_csv(joinpath(target_dir, "processed_opt_cond.csv"),
                          "omega,Re_Sigma,Error", meta.omega_grid, mean_opt, err_opt)
+        if length(data.hall_opt) == data.count
+            mean_hall, err_hall_re, err_hall_im = calc_complex_stats(data.hall_opt)
+            write_complex_series_csv(joinpath(target_dir, "spectra_hall_cond.csv"),
+                                     "omega,Re_Sigma_xy,Re_Error,Im_Sigma_xy,Im_Error",
+                                     meta.omega_grid, mean_hall, err_hall_re, err_hall_im)
+        else
+            rm(joinpath(target_dir, "spectra_hall_cond.csv"); force=true)
+        end
         write_series_csv(joinpath(target_dir, "processed_dos.csv"),
                          "omega,DOS,Error", meta.dos_omega_grid, mean_dos, err_dos)
         if length(data.dos_M) == data.count

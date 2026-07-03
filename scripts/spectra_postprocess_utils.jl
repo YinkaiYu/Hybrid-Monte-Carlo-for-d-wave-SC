@@ -26,6 +26,26 @@ function calc_stats(data_list)
     return mean_val, sem_val
 end
 
+function calc_complex_stats(data_list)
+    n_samples = length(data_list)
+    if n_samples == 0
+        return nothing, nothing, nothing
+    end
+    raw_shape = size(data_list[1])
+    sum_val = zeros(ComplexF64, raw_shape)
+    sum_re_sq = zeros(Float64, raw_shape)
+    sum_im_sq = zeros(Float64, raw_shape)
+    for d in data_list
+        sum_val .+= d
+        sum_re_sq .+= real.(d) .^ 2
+        sum_im_sq .+= imag.(d) .^ 2
+    end
+    mean_val = sum_val ./ n_samples
+    var_re = max.((sum_re_sq ./ n_samples) .- (real.(mean_val) .^ 2), 0.0)
+    var_im = max.((sum_im_sq ./ n_samples) .- (imag.(mean_val) .^ 2), 0.0)
+    return mean_val, sqrt.(var_re ./ n_samples), sqrt.(var_im ./ n_samples)
+end
+
 function selected_eta_index(file, eta_factor)
     factor = Float64(eta_factor)
     if haskey(file, "spectra_eta_factors")
@@ -149,6 +169,17 @@ function write_series_csv(path, header, grid, mean_values, err_values)
         println(io, header)
         for i in eachindex(mean_values)
             @printf(io, "%.6f,%.6e,%.6e\n", grid[i], mean_values[i], err_values[i])
+        end
+    end
+end
+
+function write_complex_series_csv(path, header, grid, mean_values, err_re, err_im)
+    open(path, "w") do io
+        println(io, header)
+        for i in eachindex(mean_values)
+            @printf(io, "%.6f,%.6e,%.6e,%.6e,%.6e\n",
+                    grid[i], real(mean_values[i]), err_re[i],
+                    imag(mean_values[i]), err_im[i])
         end
     end
 end
