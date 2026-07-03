@@ -32,15 +32,27 @@ function read_conf_robust(filepath)
 
         if isempty(indices) return nothing, nothing end
 
-        # 4. 计算热平均
-        means = mean(data[:, indices], dims=1) |> vec
-
-        # 5. 检查计算结果是否含 NaN / Inf
-        if any(isnan, means) || any(isinf, means)
-            return nothing, nothing
+        # 4. 逐列计算热平均；坏列不应丢弃整个文件
+        names_out = String[]
+        means_out = Float64[]
+        for idx in indices
+            vals = Float64[]
+            for raw in data[:, idx]
+                value = try
+                    Float64(raw)
+                catch
+                    NaN
+                end
+                isfinite(value) && push!(vals, value)
+            end
+            if !isempty(vals)
+                push!(names_out, string(col_names[idx]))
+                push!(means_out, mean(vals))
+            end
         end
 
-        return col_names[indices], means
+        isempty(names_out) && return nothing, nothing
+        return names_out, means_out
     catch
         return nothing, nothing
     end
@@ -77,6 +89,28 @@ function push_observable!(obs_dict, key::String, value)
     push!(obs_dict[key], Float64(value))
 end
 
+function longitudinal_resistivity_stats(pairs)
+    n = length(pairs)
+    n == 0 && return nothing
+    xs = [p[1] for p in pairs]
+    ys = [p[2] for p in pairs]
+    x = mean(xs)
+    y = mean(ys)
+    D = x^2 + y^2
+    if !isfinite(D) || D == 0.0
+        return (mean=NaN, err=NaN)
+    end
+    rho = x / D
+    n == 1 && return (mean=rho, err=0.0)
+    gx = (y^2 - x^2) / D^2
+    gy = -2.0 * x * y / D^2
+    Cxx = var(xs) / n
+    Cxy = cov(xs, ys) / n
+    Cyy = var(ys) / n
+    variance = gx^2 * Cxx + 2.0 * gx * gy * Cxy + gy^2 * Cyy
+    return (mean=rho, err=sqrt(max(variance, 0.0)))
+end
+
 # --- 3. 主程序 ---
 println("Starting Robust T-scan CSV processing...")
 
@@ -103,6 +137,7 @@ for t_dir in T_dirs
     # 寻找该温度下的所有 conf
     conf_dirs = glob("conf_*", t_dir)
     obs_dict = Dict{String, Vector{Float64}}()
+    rho_pairs = Tuple{Float64, Float64}[]
     
     real_n_conf = 0 # 有效构型计数器
     
@@ -138,8 +173,10 @@ for t_dir in T_dirs
             # 尝试读取 transport (可选)
             t_names, t_vals = read_conf_robust(joinpath(c_dir, "transport.csv"))
             if t_names !== nothing
+                t_conf_map = Dict{String, Float64}()
                 for (k, v) in zip(t_names, t_vals)
                     key = string(k)
+                    t_conf_map[key] = v
                     push_observable!(obs_dict, key, v)
                     if key == "Superfluid_Stiffness"
                         push_observable!(obs_dict, "Stiffness_Kubo", v)
@@ -147,6 +184,13 @@ for t_dir in T_dirs
                         push_observable!(obs_dict, "Stiffness_TwistRaw", v)
                     elseif key == "Twist_Qy_Rho_OffdiagCorrected"
                         push_observable!(obs_dict, "Stiffness_Twist", v)
+                    end
+                end
+                if haskey(t_conf_map, "DC_Conductivity") && haskey(t_conf_map, "Hall_Conductivity")
+                    sx = t_conf_map["DC_Conductivity"]
+                    sy = t_conf_map["Hall_Conductivity"]
+                    if isfinite(sx) && isfinite(sy)
+                        push!(rho_pairs, (sx, sy))
                     end
                 end
             end
@@ -164,10 +208,17 @@ for t_dir in T_dirs
                 k_mean = "$(k)_mean"
                 k_err = "$(k)_err"
                 row[k_mean] = mean(vals)
-                row[k_err] = real_n_conf > 1 ? std(vals) / sqrt(length(vals)) : 0.0
+                row[k_err] = length(vals) > 1 ? std(vals) / sqrt(length(vals)) : 0.0
                 push!(all_keys, k_mean)
                 push!(all_keys, k_err)
             end
+        end
+        rho_stats = longitudinal_resistivity_stats(rho_pairs)
+        if rho_stats !== nothing
+            row["Longitudinal_Resistivity_mean"] = rho_stats.mean
+            row["Longitudinal_Resistivity_err"] = rho_stats.err
+            push!(all_keys, "Longitudinal_Resistivity_mean")
+            push!(all_keys, "Longitudinal_Resistivity_err")
         end
         push!(all_records, row)
         println("  -> OK. Valid Samples: $real_n_conf / $(length(conf_dirs))")

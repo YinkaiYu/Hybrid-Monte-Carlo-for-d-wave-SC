@@ -1,4 +1,6 @@
 using Test
+using DelimitedFiles
+using Statistics
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, ".."))
 
@@ -9,6 +11,112 @@ end
 function julia_cmd(args...; dir=pwd(), env=Pair{String,String}[])
     cmd = Cmd(`$(Base.julia_cmd()) $args`; dir=dir)
     return setenv(cmd, env)
+end
+
+function write_small_csv(path, content)
+    mkpath(dirname(path))
+    write(path, content)
+end
+
+function summary_value(path, column)
+    data, header = readdlm(path, ',', header=true)
+    names = string.(vec(header))
+    idx = findfirst(==(column), names)
+    idx === nothing && error("missing column $column")
+    return Float64(data[1, idx])
+end
+
+function notebook_code_source(parts...)
+    path = joinpath(REPO_ROOT, parts...)
+    script = """
+import ast
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    nb = json.load(f)
+
+sources = []
+for i, cell in enumerate(nb.get("cells", [])):
+    if cell.get("cell_type") != "code":
+        continue
+    source = "".join(cell.get("source", []))
+    ast.parse(source, filename=f"{path}:cell{i}")
+    sources.append(source)
+
+sys.stdout.write("\\n".join(sources))
+"""
+    return read(`python -c $script $path`, String)
+end
+
+@testset "HPC CSV summary derives longitudinal resistivity from averaged conductivity tensor" begin
+    mktempdir() do tmp
+        t_dir = joinpath(tmp, "T_0.10")
+        write_small_csv(joinpath(t_dir, "params.jl"), """
+using DwaveHMC
+T = 0.10
+β = 10.0
+Lx = 2
+Ly = 2
+""")
+        for (conf, sx, sy, raw_rho, stiffness) in (("conf_001", 2.0, 1.0, 999.0, 0.5),
+                                                   ("conf_002", 4.0, 3.0, 888.0, NaN))
+            cdir = joinpath(t_dir, conf)
+            write_small_csv(joinpath(cdir, "observables.csv"), """
+Sweep,Energy,D2,D4,Avg_d2,Avg_d4
+1,1.0,2.0,3.0,2.0,3.0
+""")
+            write_small_csv(joinpath(cdir, "transport.csv"), """
+Sweep,Superfluid_Stiffness,DC_Conductivity,Hall_Conductivity,Longitudinal_Resistivity,Bad_Column
+1,$stiffness,$sx,$sy,$raw_rho,NaN
+""")
+        end
+
+        cmd = julia_cmd("--project=$(REPO_ROOT)",
+                        joinpath(REPO_ROOT, "projectHPC", "example", "batch_process_csv.jl");
+                        dir=tmp,
+                        env=["DWAVEHMC_ANALYSIS_DIR" => tmp])
+        @test success(cmd)
+
+        summary = joinpath(tmp, "summary_all.csv")
+        x = [2.0, 4.0]
+        y = [1.0, 3.0]
+        xbar = mean(x)
+        ybar = mean(y)
+        D = xbar^2 + ybar^2
+        expected_rho = xbar / D
+        gx = (ybar^2 - xbar^2) / D^2
+        gy = -2.0 * xbar * ybar / D^2
+        Cxx = var(x) / length(x)
+        Cxy = cov(x, y) / length(x)
+        Cyy = var(y) / length(y)
+        expected_err = sqrt(max(gx^2 * Cxx + 2.0 * gx * gy * Cxy + gy^2 * Cyy, 0.0))
+
+        @test summary_value(summary, "DC_Conductivity_mean") ≈ xbar
+        @test summary_value(summary, "Hall_Conductivity_mean") ≈ ybar
+        @test summary_value(summary, "Longitudinal_Resistivity_mean") ≈ expected_rho
+        @test summary_value(summary, "Longitudinal_Resistivity_err") ≈ expected_err
+        @test summary_value(summary, "Longitudinal_Resistivity_mean") != mean([999.0, 888.0])
+        stiffness_err = summary_value(summary, "Superfluid_Stiffness_err")
+        @test isfinite(stiffness_err)
+        @test stiffness_err == 0.0
+
+        summary_header = readline(summary)
+        @test !occursin("Longitudinal_Resistivity_n_finite_conf", summary_header)
+        @test !occursin("Bad_Column_mean", summary_header)
+    end
+end
+
+@testset "notebooks prefer tensor resistivity inputs" begin
+    stiffness_nb = notebook_code_source("projectHPC", "example", "plot_stiffness.ipynb")
+    conductivity_nb = notebook_code_source("projectHPC", "example", "plot_conductivity.ipynb")
+    @test occursin("Longitudinal_Resistivity_mean", stiffness_nb)
+    @test occursin("Hall_Conductivity_mean", stiffness_nb)
+    @test occursin("old-data proxy", stiffness_nb)
+    @test occursin("Longitudinal_Resistivity_mean", conductivity_nb)
+    @test occursin("spectra_hall_cond.csv", conductivity_nb)
+    @test occursin("sigma_xy", conductivity_nb)
 end
 
 @testset "HPC sweep_T production parameters" begin
