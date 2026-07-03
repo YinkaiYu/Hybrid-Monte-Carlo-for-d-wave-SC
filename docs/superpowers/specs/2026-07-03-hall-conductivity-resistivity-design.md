@@ -190,6 +190,8 @@ Update all top-level and HPC example processors:
 - `scripts/spectra_postprocess_utils.jl`
 - `projectHPC/example/spectra_postprocess_utils.jl`
 
+This postprocessing scope covers spectra outputs and the HPC example summary path used by the notebooks. The legacy top-level summary helpers `scripts/batch_csv_summary_T.jl` and `scripts/batch_csv_summary_beta.jl` are out of scope for this implementation and should remain backward-compatible readers of `transport.csv`; they are not guaranteed to derive `Longitudinal_Resistivity_mean`.
+
 Generate:
 
 ```text
@@ -204,7 +206,7 @@ omega,Re_Sigma_xy,Re_Error,Im_Sigma_xy,Im_Error
 
 Complex Hall arrays need componentwise statistics. Add a helper that computes complex means plus separate standard errors for the real and imaginary parts. Old JLD2 files without Hall keys should still process and should remove stale `processed_hall_cond.csv` / `spectra_hall_cond.csv` outputs.
 
-If a selected eta factor is requested, also write selected scalar DC Hall files if useful for analysis, or fold them into the existing selected DC output format. The minimum required scalar output is the T-summary columns from `transport.csv`; the minimum required frequency output is the Hall CSV above.
+Selected-eta scalar Hall files are out of scope for the first implementation. The required scalar Hall output is `Hall_Conductivity` in `transport.csv` and its `Hall_Conductivity_mean/err` summary columns. The required frequency output is `spectra_hall_cond.csv`.
 
 ### Summary CSV
 
@@ -228,7 +230,7 @@ $$
 \frac{\partial \rho}{\partial y}=-\frac{2xy}{D^2}.
 $$
 
-Use \(g^T\,\mathrm{Cov}(x,y)\,g\) for the variance of the derived mean, where \(\mathrm{Cov}(x,y)\) is the covariance matrix of the sample mean, i.e. the per-conf sample covariance divided by the number of paired finite confs. If only one paired finite conf exists, write error as `0.0`, matching the existing summary convention. Optionally write `Longitudinal_Resistivity_n_finite_conf` so notebooks can diagnose sparse or invalid temperature points.
+Use \(g^T\,\mathrm{Cov}(x,y)\,g\) for the variance of the derived mean, where \(\mathrm{Cov}(x,y)\) is the covariance matrix of the sample mean, i.e. the per-conf sample covariance divided by the number of paired finite confs. If only one paired finite conf exists, write error as `0.0`, matching the existing summary convention. Do not write a `Longitudinal_Resistivity_n_finite_conf` diagnostic column in the first implementation, because the current summary writer groups only `_mean` / `_err` columns as data columns.
 
 ### Notebooks
 
@@ -351,7 +353,15 @@ omega,Re_Sigma_xy,Re_Error,Im_Sigma_xy,Im_Error
 
 - Verify complex mean and standard error are computed componentwise.
 - Verify old fixtures without Hall keys still process successfully and remove stale Hall CSV outputs in all three processors.
-- Add a tiny fixture for `projectHPC/example/batch_process_csv.jl` confirming `Longitudinal_Resistivity_mean/err` is derived from `DC_Conductivity` and `Hall_Conductivity` means in `summary_all.csv`.
+- Add a tiny fixture for `projectHPC/example/batch_process_csv.jl` confirming `Longitudinal_Resistivity_mean/err` is derived from `DC_Conductivity` and `Hall_Conductivity` means in `summary_all.csv`. Use at least two configurations with hand-checkable means such as `(sigma_xx, sigma_xy) = (2, 1)` and `(4, 3)`, assert
+
+```text
+xbar = mean([2, 4])
+ybar = mean([1, 3])
+rho = xbar / (xbar^2 + ybar^2)
+```
+
+and assert `Longitudinal_Resistivity_err` equals the delta-method result using the paired per-conf covariance of `[2, 4]` and `[1, 3]` divided by the number of paired finite configurations.
 - Confirm invalid values in an unrelated column do not discard finite `DC_Conductivity` and `Hall_Conductivity`.
 - Confirm a file containing an old raw `Longitudinal_Resistivity` column does not use that column to compute the summary `Longitudinal_Resistivity_mean`.
 
@@ -375,6 +385,7 @@ Targeted commands after implementation:
 julia --project test/test_magnetic_field.jl
 julia --project test/test_postprocess_spectra.jl
 julia --project test/test_simulation_tbc.jl
+julia --project test/test_hpc_scripts.jl
 ```
 
 Broader verification:
