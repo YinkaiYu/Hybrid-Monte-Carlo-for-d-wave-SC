@@ -176,6 +176,9 @@ for t_dir in T_dirs
                 t_conf_map = Dict{String, Float64}()
                 for (k, v) in zip(t_names, t_vals)
                     key = string(k)
+                    if key == "Longitudinal_Resistivity" || startswith(key, "Longitudinal_Resistivity_")
+                        continue
+                    end
                     t_conf_map[key] = v
                     push_observable!(obs_dict, key, v)
                     if key == "Superfluid_Stiffness"

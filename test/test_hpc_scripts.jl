@@ -108,6 +108,41 @@ Sweep,Superfluid_Stiffness,DC_Conductivity,Hall_Conductivity,Longitudinal_Resist
     end
 end
 
+@testset "HPC CSV summary ignores raw longitudinal resistivity without Hall tensor" begin
+    mktempdir() do tmp
+        t_dir = joinpath(tmp, "T_0.20")
+        write_small_csv(joinpath(t_dir, "params.jl"), """
+using DwaveHMC
+T = 0.20
+β = 5.0
+Lx = 2
+Ly = 2
+""")
+        for (conf, sx, raw_rho) in (("conf_001", 2.0, 999.0),
+                                    ("conf_002", 4.0, 888.0))
+            cdir = joinpath(t_dir, conf)
+            write_small_csv(joinpath(cdir, "observables.csv"), """
+Sweep,Energy,D2,D4,Avg_d2,Avg_d4
+1,1.0,2.0,3.0,2.0,3.0
+""")
+            write_small_csv(joinpath(cdir, "transport.csv"), """
+Sweep,Superfluid_Stiffness,DC_Conductivity,Longitudinal_Resistivity
+1,0.5,$sx,$raw_rho
+""")
+        end
+
+        cmd = julia_cmd("--project=$(REPO_ROOT)",
+                        joinpath(REPO_ROOT, "projectHPC", "example", "batch_process_csv.jl");
+                        dir=tmp,
+                        env=["DWAVEHMC_ANALYSIS_DIR" => tmp])
+        @test success(cmd)
+
+        summary_header = readline(joinpath(tmp, "summary_all.csv"))
+        @test !occursin("Longitudinal_Resistivity_mean", summary_header)
+        @test !occursin("Longitudinal_Resistivity_err", summary_header)
+    end
+end
+
 @testset "notebooks prefer tensor resistivity inputs" begin
     stiffness_nb = notebook_code_source("projectHPC", "example", "plot_stiffness.ipynb")
     conductivity_nb = notebook_code_source("projectHPC", "example", "plot_conductivity.ipynb")
