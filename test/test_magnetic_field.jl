@@ -152,6 +152,27 @@ function manual_gauge_pair_bond(cache, p, i::Int, dir::Int)
     return DwaveHMC.pairing_coupling(p) * P_ij * ph
 end
 
+function manual_hall_tensor(cache, p; eta=p.η, omega=0.0, direction_a=:x, direction_b=:y)
+    dim = 2 * p.N
+    U = cache.U
+    E = cache.E_n
+    β = p.β
+    Ja = DwaveHMC.current_operator_matrix(cache, p; direction=direction_a, qx=0.0, qy=0.0)
+    Jb = DwaveHMC.current_operator_matrix(cache, p; direction=direction_b, qx=0.0, qy=0.0)
+    Ja_mn = U' * (Ja * U)
+    Jb_mn = U' * (Jb * U)
+    total = 0.0 + 0.0im
+    for n in 1:dim, m in 1:dim
+        m == n && continue
+        diff_E = E[m] - E[n]
+        f_n = logistic(-β * E[n])
+        f_m = logistic(-β * E[m])
+        ratio = abs(diff_E) < 1.0e-8 ? β * f_n * (1.0 - f_n) : (f_n - f_m) / diff_E
+        total += ratio * Ja_mn[n, m] * Jb_mn[m, n] / (omega - diff_E + im * eta)
+    end
+    return im * total / p.N
+end
+
 @testset "Kubo operators match Hamiltonian derivatives" begin
     for (Lx, Ly) in ((4, 4), (2, 2))
         p = magnetic_test_parameters(Lx=Lx, Ly=Ly, n_flux_sc=2,
@@ -252,6 +273,73 @@ end
     diag = DwaveHMC.measure_full_curvature_diagnostic(cache, p, state; Ax=1.0e-4, qy=2π / p.Ly)
     @test isfinite(diag.rho_full_curvature)
     @test isfinite(diag.lambda_diag)
+end
+
+@testset "Hall Kubo formula matches direct implementation" begin
+    p = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2, boundary_condition=:magnetic_pbc)
+    state = real_finite_field_state(p)
+    cache = initialize_cache(p)
+    init_static_H!(cache, p, state)
+    update_H_BdG!(cache, p, state)
+    diagonalize_H_BdG!(cache, p)
+
+    res = DwaveHMC.measure_transport_only(cache, p; eta_values=[p.η, 2p.η],
+                                          reuse_buffers=false)
+    manual_dc = manual_hall_tensor(cache, p; eta=p.η, omega=0.0)
+    manual_first = manual_hall_tensor(cache, p; eta=p.η, omega=cache.omega_grid[1])
+
+    @test res.hall_conductivity ≈ real(manual_dc) atol=1.0e-10 rtol=1.0e-10
+    @test res.hall_conductivity_eta[1] ≈ real(manual_dc) atol=1.0e-10 rtol=1.0e-10
+    @test res.hall_optical_conductivity[1] ≈ manual_first atol=1.0e-10 rtol=1.0e-10
+    @test length(res.hall_conductivity_eta) == 2
+    @test size(res.hall_optical_conductivity_eta) == (2, length(res.ω_grid))
+    @test cache.omega_grid[1] == p.η
+end
+
+@testset "Hall response uses raw finite-eta tensor under field reversal" begin
+    p0 = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=0, boundary_condition=:periodic)
+    state0 = real_finite_field_state(p0)
+    cache0 = initialize_cache(p0)
+    init_static_H!(cache0, p0, state0)
+    update_H_BdG!(cache0, p0, state0)
+    diagonalize_H_BdG!(cache0, p0)
+    res0 = DwaveHMC.measure_transport_only(cache0, p0; reuse_buffers=false)
+    manual0_dc = manual_hall_tensor(cache0, p0; eta=p0.η, omega=0.0)
+    manual0_first = manual_hall_tensor(cache0, p0; eta=p0.η, omega=cache0.omega_grid[1])
+    @test res0.hall_conductivity ≈ real(manual0_dc) atol=1.0e-10 rtol=1.0e-10
+    @test res0.hall_optical_conductivity[1] ≈ manual0_first atol=1.0e-10 rtol=1.0e-10
+    @test abs(res0.hall_conductivity) < 5.0e-3
+    @test maximum(abs.(res0.hall_optical_conductivity)) < 5.0e-3
+
+    p_plus = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=2,
+                                      boundary_condition=:magnetic_pbc)
+    p_minus = magnetic_test_parameters(Lx=4, Ly=4, n_flux_sc=-2,
+                                       boundary_condition=:magnetic_pbc)
+    state_plus = real_finite_field_state(p_plus)
+    state_minus = initialize_state(p_minus)
+    state_minus.disorder_pot .= state_plus.disorder_pot
+    state_minus.Δ .= state_plus.Δ
+    state_minus.π .= 0.0 + 0.0im
+
+    cache_plus = initialize_cache(p_plus)
+    cache_minus = initialize_cache(p_minus)
+    for (cache, p, state) in ((cache_plus, p_plus, state_plus),
+                              (cache_minus, p_minus, state_minus))
+        init_static_H!(cache, p, state)
+        update_H_BdG!(cache, p, state)
+        diagonalize_H_BdG!(cache, p)
+    end
+    res_plus = DwaveHMC.measure_transport_only(cache_plus, p_plus; reuse_buffers=false)
+    res_minus = DwaveHMC.measure_transport_only(cache_minus, p_minus; reuse_buffers=false)
+    manual_plus = manual_hall_tensor(cache_plus, p_plus; eta=p_plus.η, omega=0.0)
+    manual_minus = manual_hall_tensor(cache_minus, p_minus; eta=p_minus.η, omega=0.0)
+    manual_minus_yx = manual_hall_tensor(cache_minus, p_minus; eta=p_minus.η, omega=0.0,
+                                         direction_a=:y, direction_b=:x)
+    @test res_plus.dc_conductivity ≈ res_minus.dc_conductivity atol=1.0e-8 rtol=1.0e-6
+    @test res_plus.hall_conductivity ≈ real(manual_plus) atol=1.0e-10 rtol=1.0e-10
+    @test res_minus.hall_conductivity ≈ real(manual_minus) atol=1.0e-10 rtol=1.0e-10
+    @test res_plus.hall_conductivity ≈ real(manual_minus_yx) atol=1.0e-10 rtol=1.0e-10
+    @test abs(res_plus.hall_conductivity + res_minus.hall_conductivity) < 5.0e-2
 end
 
 @testset "Gauge-covariant pair bond helper applies link phases" begin

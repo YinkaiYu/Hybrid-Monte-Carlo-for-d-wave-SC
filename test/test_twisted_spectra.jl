@@ -295,10 +295,14 @@ end
 
     @test length(spec.dc_conductivity_eta) == 2
     @test size(spec.optical_conductivity_eta) == (2, length(spec.ω_grid))
+    @test length(spec.hall_conductivity_eta) == 2
+    @test size(spec.hall_optical_conductivity_eta) == (2, length(spec.ω_grid))
     @test size(spec.dos_eta) == (2, length(spec.dos_ω_grid))
     @test size(spec.A_MX_path_eta, 1) == 2
     @test spec.dc_conductivity == spec.dc_conductivity_eta[1]
     @test spec.optical_conductivity == vec(spec.optical_conductivity_eta[1, :])
+    @test spec.hall_conductivity == spec.hall_conductivity_eta[1]
+    @test spec.hall_optical_conductivity == vec(spec.hall_optical_conductivity_eta[1, :])
     @test spec.dos == vec(spec.dos_eta[1, :])
     @test spec.A_MX_path == spec.A_MX_path_eta[1, :, :]
 end

@@ -840,8 +840,10 @@ SpectrumResult
 struct SpectrumResult
     superfluid_stiffness::Float64
     dc_conductivity::Float64
+    hall_conductivity::Float64
     ω_grid::Vector{Float64}
     optical_conductivity::Vector{Float64}
+    hall_optical_conductivity::Vector{ComplexF64}
     dos_ω_grid::Vector{Float64}
     dos::Vector{Float64}
     dos_M::Union{Nothing,Vector{Float64}}
@@ -850,7 +852,9 @@ struct SpectrumResult
     A_MX_path::Union{Nothing,Matrix{Float64}}
     A_XG_path::Union{Nothing,Matrix{Float64}}
     dc_conductivity_eta::Vector{Float64}
+    hall_conductivity_eta::Vector{Float64}
     optical_conductivity_eta::Matrix{Float64}
+    hall_optical_conductivity_eta::Matrix{ComplexF64}
     dos_eta::Matrix{Float64}
     dos_M_eta::Union{Nothing,Matrix{Float64}}
     ldos_ω0_eta::Matrix{Float64}
@@ -881,8 +885,10 @@ function SpectrumResult(superfluid_stiffness::Float64,
                         A_XG_path::Union{Nothing,Matrix{Float64}})
     return SpectrumResult(superfluid_stiffness,
                           dc_conductivity,
+                          0.0,
                           ω_grid,
                           optical_conductivity,
+                          zeros(ComplexF64, length(ω_grid)),
                           dos_ω_grid,
                           dos,
                           dos_M,
@@ -891,7 +897,9 @@ function SpectrumResult(superfluid_stiffness::Float64,
                           A_MX_path,
                           A_XG_path,
                           [dc_conductivity],
+                          [0.0],
                           reshape(copy(optical_conductivity), 1, :),
+                          reshape(zeros(ComplexF64, length(ω_grid)), 1, :),
                           reshape(copy(dos), 1, :),
                           _single_eta_vector(dos_M),
                           reshape(copy(ldos_ω0), 1, :),
@@ -902,13 +910,65 @@ function SpectrumResult(superfluid_stiffness::Float64,
                           nothing)
 end
 
+function SpectrumResult(superfluid_stiffness::Float64,
+                        dc_conductivity::Float64,
+                        ω_grid::Vector{Float64},
+                        optical_conductivity::Vector{Float64},
+                        dos_ω_grid::Vector{Float64},
+                        dos::Vector{Float64},
+                        dos_M::Union{Nothing,Vector{Float64}},
+                        ldos_ω0::Vector{Float64},
+                        A_k_ω0::Union{Nothing,Matrix{Float64}},
+                        A_MX_path::Union{Nothing,Matrix{Float64}},
+                        A_XG_path::Union{Nothing,Matrix{Float64}},
+                        dc_conductivity_eta::Vector{Float64},
+                        optical_conductivity_eta::Matrix{Float64},
+                        dos_eta::Matrix{Float64},
+                        dos_M_eta::Union{Nothing,Matrix{Float64}},
+                        ldos_ω0_eta::Matrix{Float64},
+                        A_k_ω0_eta::Union{Nothing,Array{Float64, 3}},
+                        A_MX_path_eta::Union{Nothing,Array{Float64, 3}},
+                        A_XG_path_eta::Union{Nothing,Array{Float64, 3}},
+                        ldos_ω::Union{Nothing,Matrix{Float64}},
+                        ldos_ω_eta::Union{Nothing,Array{Float64, 3}})
+    return SpectrumResult(superfluid_stiffness,
+                          dc_conductivity,
+                          0.0,
+                          ω_grid,
+                          optical_conductivity,
+                          zeros(ComplexF64, length(ω_grid)),
+                          dos_ω_grid,
+                          dos,
+                          dos_M,
+                          ldos_ω0,
+                          A_k_ω0,
+                          A_MX_path,
+                          A_XG_path,
+                          dc_conductivity_eta,
+                          zeros(Float64, length(dc_conductivity_eta)),
+                          optical_conductivity_eta,
+                          zeros(ComplexF64, size(optical_conductivity_eta)),
+                          dos_eta,
+                          dos_M_eta,
+                          ldos_ω0_eta,
+                          A_k_ω0_eta,
+                          A_MX_path_eta,
+                          A_XG_path_eta,
+                          ldos_ω,
+                          ldos_ω_eta)
+end
+
 struct TransportResult
     superfluid_stiffness::Float64
     dc_conductivity::Float64
+    hall_conductivity::Float64
     ω_grid::Vector{Float64}
     optical_conductivity::Vector{Float64}
+    hall_optical_conductivity::Vector{ComplexF64}
     dc_conductivity_eta::Vector{Float64}
+    hall_conductivity_eta::Vector{Float64}
     optical_conductivity_eta::Matrix{Float64}
+    hall_optical_conductivity_eta::Matrix{ComplexF64}
 end
 
 struct SpectraOnlyResult
@@ -1022,6 +1082,7 @@ function measure_transport_only(cache::ComputeCache, p::ModelParameters;
     mul!(cache.temp_JU, cache.Jx_sparse_q0, U)
     mul!(cache.J_mn, U', cache.temp_JU)
     J_mn = cache.J_mn
+    Jx_mn = copy(cache.J_mn)
 
     # Grid
     σ_ω_eta = zeros(Float64, nη, length(ω_grid))
@@ -1064,13 +1125,48 @@ function measure_transport_only(cache::ComputeCache, p::ModelParameters;
     dc_cond = dc_cond_eta[1]
     copyto!(σ_ω, @view σ_ω_eta[1, :])
 
+    if nnz(cache.Jy_sparse_q0) == 0
+        build_current_operator!(cache, p; direction=:y, qx=0.0, qy=0.0, store=:q0)
+    end
+    mul!(cache.temp_JU, cache.Jy_sparse_q0, U)
+    mul!(cache.J_mn, U', cache.temp_JU)
+    Jy_mn = cache.J_mn
+
+    hall_dc_eta_complex = zeros(ComplexF64, nη)
+    hall_opt_eta = zeros(ComplexF64, nη, length(ω_grid))
+    @inbounds for n in 1:dim, m in 1:dim
+        m == n && continue
+        diff_E = E[m] - E[n]
+        f_n = f[n]
+        f_m = f[m]
+        ratio = abs(diff_E) < 1.0e-8 ? β * f_n * (1.0 - f_n) : (f_n - f_m) / diff_E
+        current_product = Jx_mn[n, m] * Jy_mn[m, n]
+        @simd for iη in 1:nη
+            hall_dc_eta_complex[iη] += im * ratio * current_product / (-diff_E + im * eta_vals[iη])
+        end
+        for (iω, ω) in enumerate(ω_grid)
+            @simd for iη in 1:nη
+                hall_opt_eta[iη, iω] += im * ratio * current_product / (ω - diff_E + im * eta_vals[iη])
+            end
+        end
+    end
+    hall_dc_eta_complex ./= N
+    hall_opt_eta ./= N
+    hall_cond_eta = real.(hall_dc_eta_complex)
+    hall_cond = hall_cond_eta[1]
+    hall_opt = vec(hall_opt_eta[1, :])
+
     if reuse_buffers
-        return TransportResult(superfluid_stiffness, dc_cond, ω_grid, σ_ω,
-                               dc_cond_eta, σ_ω_eta)
+        return TransportResult(superfluid_stiffness, dc_cond, hall_cond,
+                               ω_grid, σ_ω, hall_opt,
+                               dc_cond_eta, hall_cond_eta,
+                               σ_ω_eta, hall_opt_eta)
     end
 
-    return TransportResult(superfluid_stiffness, dc_cond, copy(ω_grid), copy(σ_ω),
-                           copy(dc_cond_eta), copy(σ_ω_eta))
+    return TransportResult(superfluid_stiffness, dc_cond, hall_cond,
+                           copy(ω_grid), copy(σ_ω), copy(hall_opt),
+                           copy(dc_cond_eta), copy(hall_cond_eta),
+                           copy(σ_ω_eta), copy(hall_opt_eta))
 end
 
 function measure_untwisted_spectra(cache::ComputeCache, p::ModelParameters;
@@ -1299,8 +1395,10 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters;
 
     return SpectrumResult(transport.superfluid_stiffness,
                           transport.dc_conductivity,
+                          transport.hall_conductivity,
                           transport.ω_grid,
                           transport.optical_conductivity,
+                          transport.hall_optical_conductivity,
                           spectra.dos_ω_grid,
                           spectra.dos,
                           spectra.dos_M,
@@ -1309,7 +1407,9 @@ function measure_transport_and_spectra(cache::ComputeCache, p::ModelParameters;
                           spectra.A_MX_path,
                           spectra.A_XG_path,
                           transport.dc_conductivity_eta,
+                          transport.hall_conductivity_eta,
                           transport.optical_conductivity_eta,
+                          transport.hall_optical_conductivity_eta,
                           spectra.dos_eta,
                           spectra.dos_M_eta,
                           spectra.ldos_ω0_eta,
