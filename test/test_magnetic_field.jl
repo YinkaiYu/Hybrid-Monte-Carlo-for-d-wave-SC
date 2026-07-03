@@ -424,7 +424,7 @@ end
             @test file["magnetic_pbc"] == true
             @test file["pairing_scalar_convention"] == "bare Landau-gauge diagnostic"
             @test file["pairing_scalar_gauge_invariant"] == false
-            @test file["conductivity_convention"] == "sigma_xx_regular"
+            @test file["conductivity_convention"] == "sigma_xx_regular_sigma_xy_kubo"
         end
     end
 end

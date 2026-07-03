@@ -282,9 +282,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
     println(f_obs, "Sweep,Accepted,dH,Energy,Delta_Amp,Delta_Loc,Delta_Glob,S_Delta,Hole_p,Delta_Diff,Delta_Pair,Delta_LocalPair,D2,D4,Avg_d2,Avg_d4,S_L2_L2,S_L2_0,S_1_0,F_0_0")
     # 输运标量
     if measure_twist
-        println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity,Twist_Qy,Twist_Qy_Rho_Curv_Cos,Twist_Qy_Rho_Curv_Sin,Twist_Qy_Rho_Curv_Avg,Twist_Qy_Lambda_Diag,Twist_Qy_Rho_OffdiagCorrected")
+        println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity,Hall_Conductivity,Twist_Qy,Twist_Qy_Rho_Curv_Cos,Twist_Qy_Rho_Curv_Sin,Twist_Qy_Rho_Curv_Avg,Twist_Qy_Lambda_Diag,Twist_Qy_Rho_OffdiagCorrected")
     else
-        println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity")
+        println(f_trans, "Sweep,Superfluid_Stiffness,DC_Conductivity,Hall_Conductivity")
     end
     
     tee_println("Starting Simulation...")
@@ -339,7 +339,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spectra_interpretation=spectra_interpretation,
                 pairing_scalar_convention=p.n_flux_sc == 0 ? "bare zero-field convention" : "bare Landau-gauge diagnostic",
                 pairing_scalar_gauge_invariant=p.n_flux_sc == 0,
-                conductivity_convention="sigma_xx_regular",
+                conductivity_convention="sigma_xx_regular_sigma_xy_kubo",
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
@@ -382,7 +382,7 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 spectra_interpretation=spectra_interpretation,
                 pairing_scalar_convention=p.n_flux_sc == 0 ? "bare zero-field convention" : "bare Landau-gauge diagnostic",
                 pairing_scalar_gauge_invariant=p.n_flux_sc == 0,
-                conductivity_convention="sigma_xx_regular",
+                conductivity_convention="sigma_xx_regular_sigma_xy_kubo",
                 spectra_Ltw=actual_spectra_Ltw,
                 spectra_Lx_eff=spectra_Lx_eff,
                 spectra_Ly_eff=spectra_Ly_eff,
@@ -485,7 +485,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
     accum_AXGpath = nothing
     accum_AXGnodePatch = nothing
     accum_dc_eta = Vector{Float64}()
+    accum_hall_cond_eta = Vector{Float64}()
     accum_opt_eta = Matrix{Float64}(undef, 0, 0)
+    accum_hall_opt_cond = Vector{ComplexF64}()
+    accum_hall_opt_eta = Matrix{ComplexF64}(undef, 0, 0)
     accum_dos_eta = Matrix{Float64}(undef, 0, 0)
     accum_dos_M_eta = nothing
     accum_dos_M_patch_eta = nothing
@@ -552,8 +555,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                                       write_ldos_spectrum=write_ldos_spectrum)
                 spec_res = SpectrumResult(transport_res.superfluid_stiffness,
                                           transport_res.dc_conductivity,
+                                          transport_res.hall_conductivity,
                                           transport_res.ω_grid,
                                           transport_res.optical_conductivity,
+                                          transport_res.hall_optical_conductivity,
                                           twisted_res.dos_ω_grid,
                                           twisted_res.dos,
                                           twisted_res.dos_M,
@@ -562,7 +567,9 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                           twisted_res.A_MX_path,
                                           twisted_res.A_XG_path,
                                           transport_res.dc_conductivity_eta,
+                                          transport_res.hall_conductivity_eta,
                                           transport_res.optical_conductivity_eta,
+                                          transport_res.hall_optical_conductivity_eta,
                                           twisted_res.dos_eta,
                                           twisted_res.dos_M_eta,
                                           twisted_res.ldos_ω0_eta,
@@ -591,9 +598,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
             if measure_twist
                 twist_qy_res = measure_twist_stiffness_qy(cache, p, state;
                                                           Ax=twist_Ax, qy=twist_qy)
-                line_trans = @sprintf("%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n",
+                line_trans = @sprintf("%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n",
                                       i, spec_res.superfluid_stiffness,
                                       spec_res.dc_conductivity,
+                                      spec_res.hall_conductivity,
                                       twist_qy_res.qy,
                                       twist_qy_res.rho_curvature_cos,
                                       twist_qy_res.rho_curvature_sin,
@@ -601,9 +609,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                                       twist_qy_res.diag_correction,
                                       twist_qy_res.rho_offdiag_corrected)
             else
-                line_trans = @sprintf("%d,%.6e,%.6e\n",
+                line_trans = @sprintf("%d,%.6e,%.6e,%.6e\n",
                                       i, spec_res.superfluid_stiffness,
-                                      spec_res.dc_conductivity)
+                                      spec_res.dc_conductivity,
+                                      spec_res.hall_conductivity)
             end
             write(f_trans, line_trans)
             flush(f_trans)
@@ -622,7 +631,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_AXGpath = spec_res.A_XG_path === nothing ? nothing : copy(spec_res.A_XG_path)
                 accum_AXGnodePatch = spec_xg_node_patch === nothing ? nothing : copy(spec_xg_node_patch)
                 accum_dc_eta = copy(spec_res.dc_conductivity_eta)
+                accum_hall_cond_eta = copy(spec_res.hall_conductivity_eta)
                 accum_opt_eta = copy(spec_res.optical_conductivity_eta)
+                accum_hall_opt_cond = copy(spec_res.hall_optical_conductivity)
+                accum_hall_opt_eta = copy(spec_res.hall_optical_conductivity_eta)
                 accum_dos_eta = copy(spec_res.dos_eta)
                 accum_dos_M_eta = spec_res.dos_M_eta === nothing ? nothing : copy(spec_res.dos_M_eta)
                 accum_dos_M_patch_eta = spec_dos_M_patch_eta === nothing ? nothing : copy(spec_dos_M_patch_eta)
@@ -637,7 +649,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_opt_cond .+= spec_res.optical_conductivity
                 accum_dos .+= spec_res.dos
                 accum_dc_eta .+= spec_res.dc_conductivity_eta
+                accum_hall_cond_eta .+= spec_res.hall_conductivity_eta
                 accum_opt_eta .+= spec_res.optical_conductivity_eta
+                accum_hall_opt_cond .+= spec_res.hall_optical_conductivity
+                accum_hall_opt_eta .+= spec_res.hall_optical_conductivity_eta
                 accum_dos_eta .+= spec_res.dos_eta
                 accum_ldos0 .+= spec_res.ldos_ω0
                 accum_ldos0_eta .+= spec_res.ldos_ω0_eta
@@ -706,7 +721,10 @@ function run_simulation(p::ModelParameters, out_dir::String;
                 accum_opt_cond ./= bin_count
                 accum_dos ./= bin_count
                 accum_dc_eta ./= bin_count
+                accum_hall_cond_eta ./= bin_count
                 accum_opt_eta ./= bin_count
+                accum_hall_opt_cond ./= bin_count
+                accum_hall_opt_eta ./= bin_count
                 accum_dos_eta ./= bin_count
                 accum_ldos0 ./= bin_count
                 accum_ldos0_eta ./= bin_count
@@ -762,7 +780,11 @@ function run_simulation(p::ModelParameters, out_dir::String;
                     g["opt_cond"] = accum_opt_cond
                     g["dos"] = accum_dos
                     g["dc_cond_eta"] = accum_dc_eta
+                    g["hall_cond"] = accum_hall_cond_eta[1]
+                    g["hall_cond_eta"] = accum_hall_cond_eta
                     g["opt_cond_eta"] = accum_opt_eta
+                    g["hall_opt_cond"] = accum_hall_opt_cond
+                    g["hall_opt_cond_eta"] = accum_hall_opt_eta
                     g["dos_eta"] = accum_dos_eta
                     if accum_dos_M !== nothing
                         g[dos_M_key] = accum_dos_M

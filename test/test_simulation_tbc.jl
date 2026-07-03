@@ -114,6 +114,60 @@ end
         end
     end
 
+    @testset "simulation writes Hall transport schema" begin
+        p = tiny_simulation_parameters()
+        mktempdir() do out_dir
+            Random.seed!(20260704)
+            run_simulation(p, out_dir;
+                           n_therm=0,
+                           n_measure=1,
+                           Nt_measure=1,
+                           measure_transport_freq=1,
+                           bin_size=1,
+                           verbose=false)
+
+            transport_lines = readlines(joinpath(out_dir, "transport.csv"))
+            transport_header = split(strip(transport_lines[1]), ",")
+            @test transport_header == ["Sweep", "Superfluid_Stiffness",
+                                       "DC_Conductivity", "Hall_Conductivity"]
+            @test length(split(strip(transport_lines[2]), ",")) == length(transport_header)
+            @test !("Longitudinal_Resistivity" in transport_header)
+
+            jldopen(joinpath(out_dir, "spectra_bins.jld2"), "r") do file
+                @test file["conductivity_convention"] == "sigma_xx_regular_sigma_xy_kubo"
+                @test haskey(file, "sweep_1/hall_cond")
+                @test haskey(file, "sweep_1/hall_cond_eta")
+                @test haskey(file, "sweep_1/hall_opt_cond")
+                @test haskey(file, "sweep_1/hall_opt_cond_eta")
+                @test !haskey(file, "sweep_1/rho_xx")
+                @test file["sweep_1/hall_opt_cond"] isa Vector{ComplexF64}
+                @test file["sweep_1/hall_opt_cond_eta"] isa Matrix{ComplexF64}
+            end
+        end
+    end
+
+    @testset "simulation writes twist Hall transport schema" begin
+        p = tiny_simulation_parameters()
+        mktempdir() do out_dir
+            Random.seed!(20260706)
+            run_simulation(p, out_dir;
+                           n_therm=0,
+                           n_measure=1,
+                           Nt_measure=1,
+                           measure_transport_freq=1,
+                           bin_size=1,
+                           measure_twist=true,
+                           verbose=false)
+
+            transport_lines = readlines(joinpath(out_dir, "transport.csv"))
+            transport_header = split(strip(transport_lines[1]), ",")
+            @test transport_header[3:5] == ["DC_Conductivity",
+                                            "Hall_Conductivity",
+                                            "Twist_Qy"]
+            @test length(split(strip(transport_lines[2]), ",")) == length(transport_header)
+        end
+    end
+
     @testset "enabled simulation writes TBC spectra metadata and patch bins" begin
         mktempdir() do out_dir
             spectra_path = run_tiny_spectra_simulation(tiny_simulation_parameters(), out_dir;
@@ -167,6 +221,29 @@ end
                 @test length(g["LDOS_0"]) == 16
                 @test length(g["dos_M_patch"]) == length(g["dos"])
                 @test length(g["dos"]) == length(file["dos_omega_grid"])
+            end
+        end
+    end
+
+    @testset "twisted spectra path preserves Hall transport fields" begin
+        p = tiny_simulation_parameters()
+        mktempdir() do out_dir
+            Random.seed!(20260705)
+            run_simulation(p, out_dir;
+                           n_therm=0,
+                           n_measure=1,
+                           Nt_measure=1,
+                           measure_transport_freq=1,
+                           bin_size=1,
+                           use_twisted_spectra=true,
+                           spectra_Ltw=1,
+                           verbose=false)
+            jldopen(joinpath(out_dir, "spectra_bins.jld2"), "r") do file
+                @test haskey(file, "sweep_1/hall_cond_eta")
+                @test haskey(file, "sweep_1/hall_opt_cond_eta")
+                @test size(file["sweep_1/hall_opt_cond_eta"], 2) == length(file["omega_grid"])
+                @test file["sweep_1/hall_cond"] == file["sweep_1/hall_cond_eta"][1]
+                @test file["sweep_1/hall_opt_cond"] == vec(file["sweep_1/hall_opt_cond_eta"][1, :])
             end
         end
     end
